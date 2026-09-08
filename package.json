@@ -1,0 +1,67 @@
+{
+  "name": "suimev-liquidator",
+  "version": "1.0.0",
+  "description": "Zero-Capital MEV Liquidation Engine on the Sui Blockchain",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "scan": "tsx src/cli/index.ts scan",
+    "simulate": "tsx src/cli/index.ts simulate",
+    "benchmark": "tsx src/cli/index.ts benchmark",
+    "replay": "tsx src/cli/index.ts replay",
+    "alchemy": "tsx src/cli/index.ts alchemy",
+    "cli": "tsx src/cli/index.ts",
+    "execute": "tsx src/cli/index.ts execute",
+    "wallet": "tsx src/cli/index.ts wallet",
+    "audit:types": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@cetusprotocol/cetus-sui-clmm-sdk": "^5.4.0",
+    "@mysten/deepbook-v3": "^2.1.4",
+    "@mysten/sui": "^2.29.0",
+    "@naviprotocol/lending": "^2.0.12",
+    "@pythnetwork/price-service-client": "^1.11.0",
+    "@pythnetwork/pyth-sui-js": "^4.0.0",
+    "@scallop-io/sui-kit": "~2.2.0",
+    "@scallop-io/sui-scallop-sdk": "^5.4.0",
+    "bignumber.js": "^9.1.2",
+    "chalk": "^5.4.1",
+    "cli-table3": "^0.6.5",
+    "decimal.js": "^10.5.0",
+    "dotenv": "^16.4.7",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "tslib": "^2.8.1",
+    "ws": "^8.18.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.6"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "sui",
+    "mev",
+    "liquidator",
+    "flash-loan",
+    "navi",
+    "scallop",
+    "cetus",
+    "deepbook",
+    "pyth",
+    "ptb"
+  ],
+  "author": "",
+  "license": "MIT"
+}
