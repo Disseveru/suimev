@@ -12,6 +12,7 @@
     "simulate": "tsx src/cli/index.ts simulate",
     "benchmark": "tsx src/cli/index.ts benchmark",
     "replay": "tsx src/cli/index.ts replay",
+    "sentio": "tsx src/cli/index.ts sentio",
     "alchemy": "tsx src/cli/index.ts alchemy",
     "cli": "tsx src/cli/index.ts",
     "execute": "tsx src/cli/index.ts execute",

@@ -102,6 +102,11 @@ export interface SimulationResult {
   isProfitable: boolean;
   errorMessage?: string;
   rawEffects?: unknown;
+  simulationType?: 'devInspect' | 'dryRun';
+  computationCostMist?: bigint;
+  storageCostMist?: bigint;
+  storageRebateMist?: bigint;
+  sentioSimulatorUrl?: string;
 }
 
 export interface ExecutionResult {

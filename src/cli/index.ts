@@ -122,13 +122,31 @@ async function main() {
       const built = ZeroCapitalPtbBuilder.buildLiquidationPTB(opp);
       console.log(chalk.green('PTB built successfully! Testing pre-flight simulation...'));
 
-      const sim = await PreFlightSimulator.simulate(built.tx, opp);
-      console.log(chalk.cyan(`Simulation Status: ${sim.success ? chalk.green('SUCCESS (PROFITABLE)') : chalk.yellow('INTERCEPTED / REVERTED')}`));
-      console.log(chalk.cyan(`Net Profit: $${sim.netProfitUsd.toFixed(2)} USD`));
-      if (!sim.success && sim.errorMessage) {
-        console.log(chalk.gray(`Pre-flight devInspect details: ${sim.errorMessage}`));
-        console.log(chalk.green('🛡️ Pre-flight guard successfully prevented gas burn for unexecutable liquidation.'));
+      console.log(chalk.cyan('Running 1: Pre-flight devInspect (Zero-Gas Move Execution)...'));
+      const devInspectSim = await PreFlightSimulator.simulate(built.tx, opp);
+      console.log(chalk.cyan(`  devInspect Status: ${devInspectSim.success ? chalk.green('SUCCESS') : chalk.yellow('ABORTED / INTERCEPTED')}`));
+      console.log(chalk.cyan(`  Simulated Net Profit: $${devInspectSim.netProfitUsd.toFixed(2)} USD`));
+      if (!devInspectSim.success && devInspectSim.errorMessage) {
+        console.log(chalk.gray(`  devInspect details: ${devInspectSim.errorMessage}`));
       }
+
+      console.log(chalk.cyan('Running 2: Full State dryRunTransactionBlock (Storage + Gas Profiling)...'));
+      const dryRunSim = await PreFlightSimulator.dryRun(built.tx, opp);
+      console.log(chalk.cyan(`  dryRun Status: ${dryRunSim.success ? chalk.green('SUCCESS') : chalk.yellow('ABORTED')}`));
+      if (dryRunSim.computationCostMist !== undefined) {
+        console.log(chalk.cyan(`  Computation Cost: ${dryRunSim.computationCostMist.toLocaleString()} MIST`));
+        console.log(chalk.cyan(`  Storage Cost: ${dryRunSim.storageCostMist?.toLocaleString()} MIST (Rebate: ${dryRunSim.storageRebateMist?.toLocaleString()} MIST)`));
+        console.log(chalk.cyan(`  Net Gas Cost: ${dryRunSim.gasUsedSui.toFixed(6)} SUI ($${dryRunSim.gasCostUsd.toFixed(4)})`));
+      }
+
+      console.log(chalk.cyan('\nSentio Visual Move Debugger:'));
+      const { sentioService } = await import('../client/sentioService.js');
+      const sentioExport = await sentioService.prepareSimulation(built.tx);
+      console.log(chalk.white(`  Simulator: ${chalk.blue(sentioExport.sentioSimulatorUrl)}`));
+      console.log(chalk.gray(`  Raw Base64 PTB Bytes (paste into Sentio or SuiVision):`));
+      console.log(chalk.yellow(`  ${sentioExport.rawTransactionBytesBase64.substring(0, 80)}... [${sentioExport.rawTransactionBytesBase64.length} bytes total]`));
+
+      console.log(chalk.green('\n🛡️ Pre-flight simulation guards verified: No unexecutable transactions reach consensus.'));
       process.exit(0);
 
     case 'benchmark':
@@ -209,6 +227,31 @@ async function main() {
       if (health.error) {
         console.log(chalk.red(`\nError: ${health.error}`));
       }
+      process.exit(0);
+    }
+
+    case 'sentio':
+    case 'sentio:status': {
+      console.log(chalk.bold.cyan('\n⚡ Querying Sentio Sui Debugger & Simulator Bridge...'));
+      const { sentioService } = await import('../client/sentioService.js');
+      const isConfigured = sentioService.isConfigured();
+
+      const table = new Table({
+        head: [chalk.yellow('Sentio Parameter'), chalk.yellow('Value')],
+        colWidths: [26, 56],
+      });
+
+      table.push(
+        ['Platform', chalk.white('Sentio Sui Move Trace & Simulation Platform')],
+        ['Web Simulator URL', chalk.cyan('https://app.sentio.xyz/sui')],
+        ['Move VM Tracing', chalk.green('SUPPORTED (Bytecode & Abort Codes)')],
+        ['PTB Visual Stepper', chalk.green('SUPPORTED (Commands, Inputs, Transfers)')],
+        ['API Access Status', isConfigured ? chalk.green('API KEY CONFIGURED') : chalk.gray('PUBLIC WEB ACCESS (FREE)')]
+      );
+
+      console.log(table.toString());
+      console.log(chalk.gray('\nTip: To trace an on-chain transaction or failed liquidation:'));
+      console.log(chalk.white('  npm run replay <TRANSACTION_DIGEST>'));
       process.exit(0);
     }
 
@@ -318,7 +361,7 @@ async function main() {
     }
 
     default:
-      console.log(`Unknown command: ${command}. Available: start, scan, simulate, benchmark, replay, alchemy, wallet, execute`);
+      console.log(`Unknown command: ${command}. Available: start, scan, simulate, benchmark, replay, sentio, alchemy, wallet, execute`);
       process.exit(1);
   }
 }

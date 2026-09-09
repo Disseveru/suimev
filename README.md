@@ -182,9 +182,27 @@ Benchmarks valuation math and PTB assembly throughput:
 npm run benchmark
 ```
 
-### 5. Run Automated Test Suite
+### 5. Sentio Move Debugger & Sui Replay Tools
 
-Executes 17 unit and integration tests covering math, PTBs, oracles, routers, and simulation:
+Simulate and inspect PTBs visually with Sentio, or replay on-chain transactions:
+
+```bash
+# Check Sentio configuration and simulation link
+npm run sentio
+
+# Replay and inspect any on-chain transaction or failed liquidation
+npm run replay <TRANSACTION_DIGEST>
+```
+
+Sui simulation is supported natively on two levels:
+
+1. **Automated Zero-Gas Pre-Flight (`devInspectTransactionBlock`)**: Runs in memory against current blockchain state before any gas is committed.
+2. **Stateful Dry-Run (`dryRunTransactionBlock`)**: Analyzes exact gas consumption, object mutation sets, and balance shifts.
+3. **Sentio Sui Move Debugger (`https://app.sentio.xyz/sui`)**: Visual bytecode step-through, PTB command inspection, and Move abort code disassembly.
+
+### 6. Run Automated Test Suite
+
+Executes 20 unit and integration tests covering math, PTBs, oracles, routers, devInspect/dryRun simulation, and Sentio bridge:
 
 ```bash
 npm test

@@ -5,14 +5,24 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 // Load .env file
 dotenv.config();
 
+const optionalUrl = z.preprocess(
+  (val) => (typeof val === 'string' && val.trim() === '' ? undefined : val),
+  z.string().url().optional()
+);
+
+const optionalString = z.preprocess(
+  (val) => (typeof val === 'string' && val.trim() === '' ? undefined : val),
+  z.string().optional()
+);
+
 const envSchema = z.object({
   NETWORK: z.enum(['mainnet', 'testnet']).default('mainnet'),
   SUI_RPC_URL: z.string().url().default('https://fullnode.mainnet.sui.io:443'),
   SUI_BACKUP_RPCS: z.string().default('https://sui-mainnet.nodeinfra.com,https://mainnet.sui.rpcpool.com'),
   SUI_WS_URL: z.string().default('wss://fullnode.mainnet.sui.io:443'),
   PYTH_HERMES_URL: z.string().url().default('https://pyth.dourolabs.app/hermes'),
-  PYTH_API_KEY: z.string().optional(),
-  SUI_PRIVATE_KEY: z.string().optional(),
+  PYTH_API_KEY: optionalString,
+  SUI_PRIVATE_KEY: optionalString,
   DRY_RUN: z.preprocess((val) => val === 'true' || val === true || val === '1', z.boolean().default(true)),
   MIN_PROFIT_USD: z.coerce.number().default(2.0),
   MAX_SLIPPAGE_BPS: z.coerce.number().default(100),
@@ -25,8 +35,9 @@ const envSchema = z.object({
   PREFERRED_DEX: z.enum(['cetus', 'deepbook', 'auto']).default('cetus'),
   POLL_INTERVAL_MS: z.coerce.number().default(3000),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
-  ALCHEMY_SUI_MAINNET_RPC: z.string().url().optional(),
-  ALCHEMY_SUI_TESTNET_RPC: z.string().url().optional(),
+  ALCHEMY_SUI_MAINNET_RPC: optionalUrl,
+  ALCHEMY_SUI_TESTNET_RPC: optionalUrl,
+  SENTIO_API_KEY: optionalString,
 });
 
 const parsedEnv = envSchema.parse(process.env);
@@ -60,6 +71,7 @@ export const CONFIG = {
   backupRpcs,
   alchemyMainnetRpc: parsedEnv.ALCHEMY_SUI_MAINNET_RPC,
   alchemyTestnetRpc: parsedEnv.ALCHEMY_SUI_TESTNET_RPC,
+  sentioApiKey: parsedEnv.SENTIO_API_KEY,
   wsUrl: parsedEnv.SUI_WS_URL,
   pythHermesUrl: parsedEnv.PYTH_HERMES_URL,
   pythApiKey: parsedEnv.PYTH_API_KEY,
