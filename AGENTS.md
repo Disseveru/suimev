@@ -43,3 +43,27 @@
 - For high-liquidity Sui pairs, Cetus CLMM `pool::flash_swap` provides superior liquidity compared to protocol-internal flash loans.
 - When assembling atomic flash swap liquidations, the exact borrower position limits and close factor must be checked before building balance splits to prevent Move abort code 2 on over-repayment.
 
+## 7. Scallop Protocol On-Chain Oracle Invariants
+
+- **Native Pyth Update Over Sponsorship**:
+  - Never set `{ isSponsoredTx: true }` when calling Scallop's `updateAssetPricesQuick()`.
+  - The sponsored gas station package (`0xa6f9bec2...::pyth_sponsor`) reverts on mainnet with `CommandArgumentError { arg_idx: 0, kind: TypeMismatch }`.
+  - Always set `{ isSponsoredTx: false }` to pay the 1-MIST update fee natively via GasCoin split.
+
+- **Whole-Obligation Oracle Refresh (Abort 1025 Guard)**:
+  - Scallop's on-chain liquidation contracts (`liquidate` and `force_unstake_unhealthy_v3`) evaluate the total portfolio value using `de5c...::price::get_price` across **EVERY collateral and debt asset** held by the borrower.
+  - If even one asset has an expired or un-updated oracle feed, the Move call aborts with error `1025` (`STALE_PRICE`).
+  - Every liquidation PTB MUST prepend Pyth + x_oracle price updates for the complete set of assets in `obligation.collaterals` and `obligation.debts`.
+
+## 8. On-Chain Health & Risk Level Ground Truth (Abort 2 Guard)
+
+- **Protocol-Calculated Risk Level**:
+  - Off-chain price caches can misprice multi-representation tokens (e.g. Wormhole WBTC vs Sui Bridge WBTC vs Native WBTC, WETH).
+  - On Scallop, an obligation is only in default if `totalRiskLevel >= 1.0` (or `totalUnhealthyCollateralValue > 0`) as calculated by `query.getObligationAccountById()`.
+  - Calling `force_unstake_unhealthy_v3` on an obligation with `riskLevel < 1.0` aborts with error `2` (`obligation_is_healthy`). The engine must verify `riskLevel >= 1.0` before constructing liquidation PTBs.
+
+## 9. Sui Move Type & Resource Preservation
+
+- When chaining zero-capital flash loans, always match exact type arguments (`Balance<T>` vs `Coin<T>`).
+- Any transient `Balance<T>` created via `coin::into_balance` lacks the `drop` ability and must be explicitly consumed (e.g., via `repay_flash_loan` or `coin::from_balance`) within the same PTB to avoid transaction construction failures.
+

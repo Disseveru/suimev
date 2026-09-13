@@ -314,7 +314,7 @@ export class ZeroCapitalPtbBuilder {
         exactCoinNames.add(opportunity.collateralSymbol.toLowerCase());
         const filteredCoins = Array.from(exactCoinNames).filter(c => c !== 'coin' && c !== 'unknown');
         if (filteredCoins.length > 0) {
-          await scallopTx.updateAssetPricesQuick(filteredCoins, { isSponsoredTx: true });
+          await scallopTx.updateAssetPricesQuick(filteredCoins, { isSponsoredTx: false });
         }
 
         // 2. Check obligation lock state — use TTL cache to skip extra RPC on retries
