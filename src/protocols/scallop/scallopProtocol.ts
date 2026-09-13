@@ -1,4 +1,5 @@
 import { Scallop } from '@scallop-io/sui-scallop-sdk';
+import { SuiClientManager } from '../../client/suiClient.js';
 import { SCALLOP_CONFIG } from '../../config/constants.js';
 import { CONFIG } from '../../config/index.js';
 import { logger } from '../../ui/logger.js';
@@ -23,6 +24,20 @@ export class ScallopProtocol {
   public async initialize(): Promise<void> {
     if (this.isInitialized) return;
 
+    // Ensure Scallop indexer API requests include required origin/referer headers to bypass 403 Forbidden
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.href : (input && typeof input === 'object' && 'url' in input ? (input as any).url : '');
+      if (typeof urlStr === 'string' && urlStr.includes('scallop.io')) {
+        const headers = new Headers(init?.headers || (typeof input === 'object' && input && 'headers' in input ? (input as any).headers : {}));
+        if (!headers.has('Origin')) headers.set('Origin', 'https://app.scallop.io');
+        if (!headers.has('Referer')) headers.set('Referer', 'https://app.scallop.io/');
+        if (!headers.has('User-Agent')) headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+        init = { ...init, headers };
+      }
+      return origFetch(input, init);
+    };
+
     try {
       logger.info('Initializing Scallop SDK...');
       this.sdk = new Scallop({
@@ -43,6 +58,36 @@ export class ScallopProtocol {
 
   public getSdk(): Scallop | null {
     return this.sdk;
+  }
+
+  public async isObligationLocked(obligationId: string): Promise<boolean> {
+    try {
+      if (this.sdk) {
+        const query = await this.sdk.createScallopQuery();
+        return await query.getObligationLocked(obligationId);
+      }
+    } catch {
+      // Fall through to direct on-chain object query
+    }
+
+    try {
+      const client = SuiClientManager.getInstance().getClient();
+      const obj = await client.getObject({ id: obligationId, options: { showContent: true } });
+      const fields = (obj.data?.content as any)?.fields;
+      return Boolean(fields?.liquidate_locked);
+    } catch {
+      return false;
+    }
+  }
+
+  public async createScallopBuilder() {
+    if (!this.sdk) {
+      await this.initialize();
+    }
+    if (!this.sdk) {
+      throw new Error('Scallop SDK is unavailable');
+    }
+    return await this.sdk.createScallopBuilder();
   }
 }
 

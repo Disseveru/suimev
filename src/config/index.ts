@@ -53,17 +53,65 @@ const backupRpcs = parsedEnv.SUI_BACKUP_RPCS
   ? parsedEnv.SUI_BACKUP_RPCS.split(',').map((u) => u.trim()).filter(Boolean)
   : [];
 
-// Keypair handling: generate an ephemeral keypair if no private key is provided for safe dry runs
-let operatorKeypair: Ed25519Keypair;
-if (parsedEnv.SUI_PRIVATE_KEY && parsedEnv.SUI_PRIVATE_KEY.startsWith('suiprivkey')) {
-  try {
-    operatorKeypair = Ed25519Keypair.fromSecretKey(parsedEnv.SUI_PRIVATE_KEY);
-  } catch {
-    operatorKeypair = new Ed25519Keypair();
+// Keypair handling: parse multi-format private keys with safety guards for live consensus
+function parseOperatorKeypair(rawKey?: string, isDryRun: boolean = true): Ed25519Keypair {
+  if (!rawKey || !rawKey.trim()) {
+    if (!isDryRun) {
+      throw new Error(
+        'CRITICAL SECURITY ERROR: SUI_PRIVATE_KEY is empty in .env while DRY_RUN=false! Live broadcasting requires a persistent keypair.'
+      );
+    }
+    return new Ed25519Keypair();
   }
-} else {
-  operatorKeypair = new Ed25519Keypair();
+
+  const trimmed = rawKey.trim();
+
+  // 1. Bech32 format (e.g. suiprivkey1...)
+  if (trimmed.startsWith('suiprivkey')) {
+    try {
+      return Ed25519Keypair.fromSecretKey(trimmed);
+    } catch (e) {
+      if (!isDryRun) throw new Error(`Invalid suiprivkey format in SUI_PRIVATE_KEY: ${e}`);
+    }
+  }
+
+  // 2. Hex format (with or without 0x prefix)
+  const hexCandidate = trimmed.startsWith('0x') ? trimmed.slice(2) : trimmed;
+  if (/^[0-9a-fA-F]+$/.test(hexCandidate) && (hexCandidate.length === 64 || hexCandidate.length === 66 || hexCandidate.length === 128)) {
+    try {
+      const buf = Buffer.from(hexCandidate, 'hex');
+      if (buf.length === 33 && buf[0] === 0) {
+        return Ed25519Keypair.fromSecretKey(new Uint8Array(buf.subarray(1)));
+      } else if (buf.length === 32 || buf.length === 64) {
+        return Ed25519Keypair.fromSecretKey(new Uint8Array(buf.subarray(0, 32)));
+      }
+    } catch (e) {
+      if (!isDryRun) throw new Error(`Failed to parse hex SUI_PRIVATE_KEY: ${e}`);
+    }
+  }
+
+  // 3. Base64 format (standard format used in sui.keystore)
+  try {
+    const buf = Buffer.from(trimmed, 'base64');
+    if (buf.length === 33 && buf[0] === 0) {
+      return Ed25519Keypair.fromSecretKey(new Uint8Array(buf.subarray(1)));
+    } else if (buf.length === 32 || buf.length === 64) {
+      return Ed25519Keypair.fromSecretKey(new Uint8Array(buf.subarray(0, 32)));
+    }
+  } catch (e) {
+    if (!isDryRun) throw new Error(`Failed to parse base64 SUI_PRIVATE_KEY: ${e}`);
+  }
+
+  if (!isDryRun) {
+    throw new Error(
+      'CRITICAL CONFIG ERROR: Malformed SUI_PRIVATE_KEY in .env while DRY_RUN=false! Refusing to generate ephemeral key in live mode.'
+    );
+  }
+
+  return new Ed25519Keypair();
 }
+
+const operatorKeypair = parseOperatorKeypair(parsedEnv.SUI_PRIVATE_KEY, parsedEnv.DRY_RUN);
 
 export const CONFIG = {
   network: parsedEnv.NETWORK,

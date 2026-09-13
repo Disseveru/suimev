@@ -59,7 +59,7 @@ export class PreFlightSimulator {
       const storageRebate = BigInt(gasUsed?.storageRebate || '0');
 
       let netGasMist = computationCost + storageCost - storageRebate;
-      if (netGasMist < 0n) netGasMist = computationCost; // rebate floor
+      if (netGasMist < 0n) netGasMist = 0n; // rebate floor: sponsored tx clamp
 
       const gasUsedSui = Number(netGasMist) / 1e9;
       const gasCostUsd = gasUsedSui * suiPriceUsd;
@@ -179,7 +179,7 @@ export class PreFlightSimulator {
       const storageRebate = BigInt(gasUsed?.storageRebate || '0');
 
       let netGasMist = computationCost + storageCost - storageRebate;
-      if (netGasMist < 0n) netGasMist = computationCost;
+      if (netGasMist < 0n) netGasMist = 0n; // rebate floor: sponsored tx clamp
 
       const gasUsedSui = Number(netGasMist) / 1e9;
       const gasCostUsd = gasUsedSui * suiPriceUsd;

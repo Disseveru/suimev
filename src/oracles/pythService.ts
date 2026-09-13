@@ -26,7 +26,7 @@ export const ON_CHAIN_PYTH_OBJECTS: Record<string, { objectId: string; symbols: 
   },
   WETH: {
     objectId: '0x88d7ef5396b1f885ed347f97f3b58daae8a424122668e96bdb4ee847cff62adf',
-    symbols: ['WETH'],
+    symbols: ['WETH', 'sbETH'],
   },
   WBTC: {
     objectId: '0xe64832d1b4c9a75139a7313aee69da891297d8397fda2863b5bdcc4af0b79758',
@@ -47,6 +47,22 @@ export const ON_CHAIN_PYTH_OBJECTS: Record<string, { objectId: string; symbols: 
   SCA: {
     objectId: '0xf6de1d3279a269a597d813cbaca59aa906543ab9a8c64e84a4722f1a20863985',
     symbols: ['SCA'],
+  },
+  SOL: {
+    objectId: '0x24a14523bbc266db0d4f68dab179f416e86848365de2bfe45490af920709e876',
+    symbols: ['SOL'],
+  },
+  WAL: {
+    objectId: '0xdbea8600eeeb0399df58c28e73b8201ae880a954813131d33bfa6902ccdadd24',
+    symbols: ['WAL'],
+  },
+  FDUSD: {
+    objectId: '0xf905acf04bac920b667192ea97ea82e615e6a640167b05dcd090df27d85a3ca2',
+    symbols: ['FDUSD'],
+  },
+  USDY: {
+    objectId: '0xd726651e0ef603ac13eaa7c165cd0a192fc6434cc00976c9220459044775a093',
+    symbols: ['USDY'],
   },
 };
 
@@ -110,7 +126,8 @@ export class PythPriceService {
     const ids = Array.from(objectMap.keys());
 
     try {
-      const responses = await rpcManager.executeWithFallback('pythMultiGetObjects', (client) =>
+      // 🏁 Use broadcast race — fastest RPC response for oracle data wins
+      const responses = await rpcManager.executeBroadcastRace('pythMultiGetObjects', (client) =>
         client.multiGetObjects({
           ids,
           options: { showContent: true },
@@ -247,7 +264,7 @@ export class PythPriceService {
         url.searchParams.set('encoding', 'base64');
         url.searchParams.set('parsed', 'false');
 
-        const res = await fetch(url.toString(), { headers });
+        const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(4000) });
 
         if (!res.ok) continue;
 

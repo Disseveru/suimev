@@ -42,13 +42,13 @@ export class ObligationRegistry {
     this.safeWatchlist.delete(key);
 
     const hf = state.healthFactor;
-    if (hf < 1.0 && state.totalDebtUsd > 0.01) {
+    if (hf < 1.0 && state.totalDebtUsd > 0.01 && state.totalCollateralUsd > 0) {
       this.immediateTargets.set(key, state);
       logger.warn(
-        { protocol: state.protocol, id: state.obligationId, hf: hf.toFixed(4), debtUsd: state.totalDebtUsd.toFixed(2) },
+        { protocol: state.protocol, id: state.obligationId, hf: hf.toFixed(4), debtUsd: state.totalDebtUsd.toFixed(2), colUsd: state.totalCollateralUsd.toFixed(2) },
         `🚨 UNDERCOLLATERALIZED OBLIGATION DETECTED (HF: ${hf.toFixed(4)})`
       );
-    } else if (hf < 1.05 && state.totalDebtUsd > 0.01) {
+    } else if (hf < 1.05 && state.totalDebtUsd > 0.01 && state.totalCollateralUsd > 0) {
       this.hotWatchlist.set(key, state);
     } else {
       this.safeWatchlist.set(key, state);
@@ -60,8 +60,10 @@ export class ObligationRegistry {
    */
   public reevaluateHotWatchlist(): ObligationState[] {
     const newlyUndercollateralized: ObligationState[] = [];
+    // Snapshot entries to prevent infinite loop when bucketObligation deletes and re-inserts into this.hotWatchlist
+    const entries = Array.from(this.hotWatchlist.entries());
 
-    for (const [key, state] of this.hotWatchlist.entries()) {
+    for (const [key, state] of entries) {
       HealthFactorEngine.evaluateObligation(state);
       this.bucketObligation(key, state);
       if (state.healthFactor < 1.0 && state.totalDebtUsd > 0.01) {

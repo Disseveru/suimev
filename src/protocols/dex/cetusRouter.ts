@@ -36,12 +36,74 @@ export const CANONICAL_CETUS_POOLS: Record<string, CetusPoolDef> = {
     coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
     coinTypeB: '0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT',
   },
-  'USDC_ETH': {
+  'USDC_SBETH': {
     poolId: '0x9e59de50d9e5979fc03ac5bcacdb581c823dbd27d63a036131e17b391f2fac88',
     coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
-    coinTypeB: '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN',
+    coinTypeB: '0xd0e89b2af5e4910726fbcd8b8dd37bb79b29e5f83f7491bca830e94f7f226d29::eth::ETH',
+  },
+  'WETH_WUSDC': {
+    poolId: '0x5b0b24c27ccf6d0e98f3a8704d2e577de83fa574d3a9060eb8945eeb82b3e2df',
+    coinTypeA: '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN',
+    coinTypeB: '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN',
+  },
+  'USDT_SUI': {
+    poolId: '0x6fdef479da176aa7564b541ac7b4e501c4912d1cacd944942f0dd505137e95c1',
+    coinTypeA: '0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'USDC_WAL': {
+    poolId: '0x47e8211061ce047fafb3c547dde4d316bea7ed82f148d68bbed2a6ed89b74d04',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
+  },
+  'HASUI_SUI': {
+    poolId: '0xa6bd09a3a50b80610f1af9f4e5ca8d9a7d009e620374e9b1bff814def8ceb7b8',
+    coinTypeA: '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d::hasui::HASUI',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'USDC_NAVX': {
+    poolId: '0xedd6e5722a403032d4db54715c428f8b9ba016701580d9570b89ddbbccad2b0e',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX',
+  },
+  'NAVX_WAL': {
+    poolId: '0x2de19f93553f0156ca590c3c05da4e0c3a30231253b0988b258b186f4def3f3e',
+    coinTypeA: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX',
+    coinTypeB: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
   },
 };
+
+// Pre-indexed Direct Pool Map for O(1) ~20ns routing lookup
+export interface DirectPoolEntry {
+  poolId: string;
+  a2b: boolean;
+  coinTypeA: string;
+  coinTypeB: string;
+}
+
+const DIRECT_POOL_MAP = new Map<string, DirectPoolEntry>();
+
+for (const pool of Object.values(CANONICAL_CETUS_POOLS)) {
+  const normA = normalizeStructTag(pool.coinTypeA);
+  const normB = normalizeStructTag(pool.coinTypeB);
+  DIRECT_POOL_MAP.set(`${normA}:::${normB}`, {
+    poolId: pool.poolId,
+    a2b: true,
+    coinTypeA: pool.coinTypeA,
+    coinTypeB: pool.coinTypeB,
+  });
+  DIRECT_POOL_MAP.set(`${normB}:::${normA}`, {
+    poolId: pool.poolId,
+    a2b: false,
+    coinTypeA: pool.coinTypeA,
+    coinTypeB: pool.coinTypeB,
+  });
+}
+
+const SUI_TOKEN = '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI';
+const USDC_TOKEN = '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC';
+const NORM_SUI = normalizeStructTag(SUI_TOKEN);
+const NORM_USDC = normalizeStructTag(USDC_TOKEN);
 
 /**
  * Cetus CLMM Atomic DEX Swap Router
@@ -49,36 +111,42 @@ export const CANONICAL_CETUS_POOLS: Record<string, CetusPoolDef> = {
  */
 export class CetusRouter {
   /**
-   * Find matching Cetus pool for pair with precise CoinA/CoinB classification
+   * Find matching Cetus pool for pair with precise CoinA/CoinB classification (O(1) Map lookup)
    */
-  public static findPoolId(fromCoinType: string, toCoinType: string): { poolId: string; a2b: boolean; coinTypeA: string; coinTypeB: string } | null {
+  public static findPoolId(fromCoinType: string, toCoinType: string): DirectPoolEntry | null {
+    const key = `${normalizeStructTag(fromCoinType)}:::${normalizeStructTag(toCoinType)}`;
+    return DIRECT_POOL_MAP.get(key) ?? null;
+  }
+
+  /**
+   * Check if a direct or 2-hop Cetus route exists for pair (hops via SUI or USDC)
+   */
+  public static hasPool(fromCoinType: string, toCoinType: string): boolean {
+    if (this.findPoolId(fromCoinType, toCoinType) !== null) {
+      return true;
+    }
     const normFrom = normalizeStructTag(fromCoinType);
     const normTo = normalizeStructTag(toCoinType);
 
-    for (const pool of Object.values(CANONICAL_CETUS_POOLS)) {
-      const normA = normalizeStructTag(pool.coinTypeA);
-      const normB = normalizeStructTag(pool.coinTypeB);
-
-      if (normFrom === normA && normTo === normB) {
-        return { poolId: pool.poolId, a2b: true, coinTypeA: pool.coinTypeA, coinTypeB: pool.coinTypeB };
-      }
-      if (normFrom === normB && normTo === normA) {
-        return { poolId: pool.poolId, a2b: false, coinTypeA: pool.coinTypeA, coinTypeB: pool.coinTypeB };
+    // Check 2-hop route via SUI
+    if (normFrom !== NORM_SUI && normTo !== NORM_SUI) {
+      if (this.findPoolId(fromCoinType, SUI_TOKEN) !== null && this.findPoolId(SUI_TOKEN, toCoinType) !== null) {
+        return true;
       }
     }
 
-    return null;
+    // Check 2-hop route via USDC
+    if (normFrom !== NORM_USDC && normTo !== NORM_USDC) {
+      if (this.findPoolId(fromCoinType, USDC_TOKEN) !== null && this.findPoolId(USDC_TOKEN, toCoinType) !== null) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
-   * Check if a direct Cetus pool exists for pair
-   */
-  public static hasPool(fromCoinType: string, toCoinType: string): boolean {
-    return this.findPoolId(fromCoinType, toCoinType) !== null;
-  }
-
-  /**
-   * Compute swap quote and minimum output with slippage protection
+   * Compute swap quote and minimum output with slippage protection (supports direct & 2-hop)
    */
   public static getQuote(
     fromCoinType: string,
@@ -108,7 +176,32 @@ export class CetusRouter {
 
     const poolInfo = this.findPoolId(fromCoinType, toCoinType);
     if (!poolInfo) {
-      throw new Error(`No Cetus liquidity pool found for pair ${fromCoinType} -> ${toCoinType}`);
+      // Check 2-hop routes
+      const normFrom = normalizeStructTag(fromCoinType);
+      const normTo = normalizeStructTag(toCoinType);
+
+      let intermediateToken: string | null = null;
+      if (normFrom !== NORM_SUI && normTo !== NORM_SUI && this.findPoolId(fromCoinType, SUI_TOKEN) && this.findPoolId(SUI_TOKEN, toCoinType)) {
+        intermediateToken = SUI_TOKEN;
+      } else if (normFrom !== NORM_USDC && normTo !== NORM_USDC && this.findPoolId(fromCoinType, USDC_TOKEN) && this.findPoolId(USDC_TOKEN, toCoinType)) {
+        intermediateToken = USDC_TOKEN;
+      }
+
+      if (intermediateToken) {
+        return {
+          dex: 'cetus',
+          fromCoinType,
+          toCoinType,
+          amountIn,
+          expectedAmountOut,
+          minimumAmountOut,
+          slippageBps,
+          priceImpactPct: 0.2, // Multi-hop routing
+          poolId: intermediateToken === SUI_TOKEN ? '2-hop-via-sui' : '2-hop-via-usdc',
+          a2b: true,
+        };
+      }
+      throw new Error(`No Cetus liquidity pool or route found for pair ${fromCoinType} -> ${toCoinType}`);
     }
 
     return {
@@ -126,17 +219,38 @@ export class CetusRouter {
   }
 
   /**
-   * Add Cetus atomic CLMM swap to PTB
-   * Consumes inputCoin and returns outputCoin without transferring to wallet address
+   * Add Cetus atomic CLMM swap to PTB (handles direct and 2-hop routed swaps)
    */
   public static addSwap(
     tx: Transaction,
     quote: SwapQuote,
     inputCoin: TransactionObjectArgument
   ): TransactionObjectArgument {
+    if (quote.poolId === '2-hop-via-sui' || quote.poolId === '2-hop-via-usdc') {
+      const hopToken = quote.poolId === '2-hop-via-sui' ? SUI_TOKEN : USDC_TOKEN;
+      const halfSlippage = Math.max(25, Math.floor(quote.slippageBps / 2));
+      const quoteHop1 = this.getQuote(quote.fromCoinType, hopToken, quote.amountIn, halfSlippage);
+      const intermediateCoin = this.addDirectSwap(tx, quoteHop1, inputCoin, false);
+      const quoteHop2 = this.getQuote(hopToken, quote.toCoinType, quoteHop1.expectedAmountOut, halfSlippage);
+      // For hop 2, useCoinValue = true sweeps the actual on-chain output of hop 1, preventing InsufficientBalance aborts
+      return this.addDirectSwap(tx, quoteHop2, intermediateCoin, true);
+    }
+
+    return this.addDirectSwap(tx, quote, inputCoin, false);
+  }
+
+  /**
+   * Add direct pool swap to PTB
+   */
+  private static addDirectSwap(
+    tx: Transaction,
+    quote: SwapQuote,
+    inputCoin: TransactionObjectArgument,
+    useCoinValue: boolean = false
+  ): TransactionObjectArgument {
     const poolInfo = this.findPoolId(quote.fromCoinType, quote.toCoinType);
     if (!poolInfo) {
-      throw new Error(`No Cetus liquidity pool found for pair ${quote.fromCoinType} -> ${quote.toCoinType}`);
+      throw new Error(`No direct Cetus liquidity pool found for pair ${quote.fromCoinType} -> ${quote.toCoinType}`);
     }
     const coinTypeA = poolInfo.coinTypeA;
     const coinTypeB = poolInfo.coinTypeB;
@@ -146,38 +260,188 @@ export class CetusRouter {
       ? '4295048016' // MIN_SQRT_PRICE_X64
       : '79226673515401279992447579055'; // MAX_SQRT_PRICE_X64
 
-    const primaryCoinInputA = quote.a2b ? inputCoin : tx.moveCall({
-      target: '0x2::coin::zero',
-      typeArguments: [coinTypeA],
+    // Always dynamically query the exact on-chain coin value so the CLMM swap
+    // matches the exact amount seized from the borrower
+    const amountArg = tx.moveCall({
+      target: '0x2::coin::value',
+      typeArguments: [quote.fromCoinType],
+      arguments: [inputCoin],
     });
 
-    const primaryCoinInputB = quote.a2b ? tx.moveCall({
-      target: '0x2::coin::zero',
-      typeArguments: [coinTypeB],
-    }) : inputCoin;
-
-    const [outCoinA, outCoinB] = tx.moveCall({
-      target: `${CETUS_CONFIG.integratePackageId}::router::swap`,
+    // Direct atomic swap on Cetus CLMM pool bypassing deprecated router package
+    const [balanceA, balanceB, flashReceipt] = tx.moveCall({
+      target: `${CETUS_CONFIG.activeClmmPackageId}::pool::flash_swap`,
+      typeArguments: [coinTypeA, coinTypeB],
       arguments: [
         tx.object(CETUS_CONFIG.globalConfigId),
         tx.object(quote.poolId),
-        primaryCoinInputA,
-        primaryCoinInputB,
         tx.pure.bool(quote.a2b),
         tx.pure.bool(true), // by_amount_in = true
-        tx.pure.u64(quote.amountIn),
+        amountArg,
         tx.pure.u128(sqrtPriceLimit),
-        tx.pure.bool(false), // use coin value always false
         tx.object(SUI_CLOCK_OBJECT_ID),
       ],
-      typeArguments: [coinTypeA, coinTypeB],
     });
 
-    // Safely transfer any unused input coin remainder / slippage dust back to operator wallet
-    const unusedCoin = quote.a2b ? outCoinA : outCoinB;
-    tx.transferObjects([unusedCoin], tx.pure.address(CONFIG.operatorAddress));
+    const inputBalance = tx.moveCall({
+      target: '0x2::coin::into_balance',
+      typeArguments: [quote.fromCoinType],
+      arguments: [inputCoin],
+    });
 
-    // Return the received token
-    return quote.a2b ? outCoinB : outCoinA;
+    let outCoin: TransactionObjectArgument;
+
+    if (quote.a2b) {
+      // Swapping A -> B
+      outCoin = tx.moveCall({
+        target: '0x2::coin::from_balance',
+        typeArguments: [coinTypeB],
+        arguments: [balanceB],
+      });
+      tx.moveCall({
+        target: '0x2::balance::destroy_zero',
+        typeArguments: [coinTypeA],
+        arguments: [balanceA],
+      });
+      const zeroBalanceB = tx.moveCall({
+        target: '0x2::balance::zero',
+        typeArguments: [coinTypeB],
+        arguments: [],
+      });
+      tx.moveCall({
+        target: `${CETUS_CONFIG.activeClmmPackageId}::pool::repay_flash_swap`,
+        typeArguments: [coinTypeA, coinTypeB],
+        arguments: [
+          tx.object(CETUS_CONFIG.globalConfigId),
+          tx.object(quote.poolId),
+          inputBalance,
+          zeroBalanceB,
+          flashReceipt,
+        ],
+      });
+    } else {
+      // Swapping B -> A
+      outCoin = tx.moveCall({
+        target: '0x2::coin::from_balance',
+        typeArguments: [coinTypeA],
+        arguments: [balanceA],
+      });
+      tx.moveCall({
+        target: '0x2::balance::destroy_zero',
+        typeArguments: [coinTypeB],
+        arguments: [balanceB],
+      });
+      const zeroBalanceA = tx.moveCall({
+        target: '0x2::balance::zero',
+        typeArguments: [coinTypeA],
+        arguments: [],
+      });
+      tx.moveCall({
+        target: `${CETUS_CONFIG.activeClmmPackageId}::pool::repay_flash_swap`,
+        typeArguments: [coinTypeA, coinTypeB],
+        arguments: [
+          tx.object(CETUS_CONFIG.globalConfigId),
+          tx.object(quote.poolId),
+          zeroBalanceA,
+          inputBalance,
+          flashReceipt,
+        ],
+      });
+    }
+
+    return outCoin;
+  }
+
+  /**
+   * Add Cetus CLMM atomic flash swap to PTB
+   * Uses the active CLMM package directly.
+   */
+  public static addFlashSwap(
+    tx: Transaction,
+    poolId: string,
+    coinTypeA: string,
+    coinTypeB: string,
+    borrowCoinType: string,
+    borrowAmount: bigint
+  ): {
+    loanBalance: TransactionObjectArgument;
+    emptyBalance: TransactionObjectArgument;
+    flashReceipt: TransactionObjectArgument;
+    payAmount: TransactionObjectArgument;
+    a2b: boolean;
+  } {
+    const normBorrow = normalizeStructTag(borrowCoinType);
+    const normA = normalizeStructTag(coinTypeA);
+    // If borrowCoinType is Coin A: we want to receive A, which means a2b = false (swap B to A)
+    // If borrowCoinType is Coin B: we want to receive B, which means a2b = true (swap A to B)
+    const a2b = normBorrow !== normA;
+    const sqrtPriceLimit = a2b ? '4295048016' : '79226673515401279992447579054';
+
+    const [balanceA, balanceB, flashReceipt] = tx.moveCall({
+      target: `${CETUS_CONFIG.activeClmmPackageId}::pool::flash_swap`,
+      typeArguments: [coinTypeA, coinTypeB],
+      arguments: [
+        tx.object(CETUS_CONFIG.globalConfigId),
+        tx.object(poolId),
+        tx.pure.bool(a2b),
+        tx.pure.bool(false), // by_amount_in = false
+        tx.pure.u64(borrowAmount),
+        tx.pure.u128(sqrtPriceLimit),
+        tx.object(SUI_CLOCK_OBJECT_ID),
+      ],
+    });
+
+    const payAmount = tx.moveCall({
+      target: `${CETUS_CONFIG.activeClmmPackageId}::pool::swap_pay_amount`,
+      typeArguments: [coinTypeA, coinTypeB],
+      arguments: [flashReceipt],
+    });
+
+    const loanBalance = a2b ? balanceB : balanceA;
+    const emptyBalance = a2b ? balanceA : balanceB;
+
+    return {
+      loanBalance,
+      emptyBalance,
+      flashReceipt,
+      payAmount,
+      a2b,
+    };
+  }
+
+  /**
+   * Repay Cetus CLMM atomic flash swap in PTB
+   */
+  public static addRepayFlashSwap(
+    tx: Transaction,
+    poolId: string,
+    coinTypeA: string,
+    coinTypeB: string,
+    repayBalance: TransactionObjectArgument,
+    flashReceipt: TransactionObjectArgument,
+    a2b: boolean
+  ): void {
+    const zeroBalanceA = a2b ? repayBalance : tx.moveCall({
+      target: '0x2::balance::zero',
+      typeArguments: [coinTypeA],
+      arguments: [],
+    });
+    const zeroBalanceB = a2b ? tx.moveCall({
+      target: '0x2::balance::zero',
+      typeArguments: [coinTypeB],
+      arguments: [],
+    }) : repayBalance;
+
+    tx.moveCall({
+      target: `${CETUS_CONFIG.activeClmmPackageId}::pool::repay_flash_swap`,
+      typeArguments: [coinTypeA, coinTypeB],
+      arguments: [
+        tx.object(CETUS_CONFIG.globalConfigId),
+        tx.object(poolId),
+        zeroBalanceA,
+        zeroBalanceB,
+        flashReceipt,
+      ],
+    });
   }
 }

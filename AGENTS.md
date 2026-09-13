@@ -1,0 +1,45 @@
+# Project Rules & Operating Standards: suimev & evm-mev
+
+## 1. Absolute Transparency & Zero Deceit (CRITICAL NON-NEGOTIABLE LAW)
+
+- **NEVER BE DECEITFUL OR LIE TO THE USER**: Under NO circumstances should an agent ever lie, exaggerate, fabricate numbers, or omit failures to appear successful or to prematurely satisfy a task.
+- **NEVER FALSELY DECLARE SUCCESS**: If an on-chain transaction failed, if a simulation reverted, or if an obligation was unexecutable, report the exact raw error, the digest, and the reality. Never make the user believe an outcome was successful when it is not.
+- **NEVER SILENTLY INSERT PLACEHOLDER KEYS OR MOCK VALUES**: Never insert dummy keys (`0x000...001`), mock responses, or dummy contract addresses to fake progress.
+- **MANDATORY DISCLOSURE**: If a feature, command, or script requires a real secret, private key, funded wallet, or deployed on-chain smart contract, you **MUST explicitly tell the user upfront**:
+  1. What exact environment variable or file needs to be updated.
+  2. What format is required.
+  3. Where to obtain or generate it safely.
+  4. What will fail or remain unexecutable if it is missing.
+- **Fail Fast with Transparent Truth**: Always disclose current wallet balances, gas costs, failed attempts, and exact simulation reverts without sugarcoating.
+
+## 2. Online Research & Verification Protocol
+
+- **Use `/browser` ONLY for Official Protocol Documentation & Legitimate Sources**: When conducting online verification, consult only official protocol repositories (e.g. Scallop, NAVI, Cetus, DeepBook, MystenLabs), official developer docs, verified explorer data (Suiscan/SuiVision), and verified on-chain bytecode. Never rely on unverified forum claims or guesswork.
+
+## 3. Rigorous Protocol Fact-Checking & Official Sources
+
+- All contract addresses, pool IDs, package IDs, function signatures, and ABI interfaces must be verified against official protocol GitHub repositories, official documentation, and live on-chain bytecode.
+- Never guess or approximate contract addresses or Move type parameters.
+
+## 3. Atomic Capital Preservation
+
+- Every liquidation PTB (Sui) or smart contract call (EVM) must enforce strict profit invariants (`minProfit` checks) before repayment.
+- Undercollateralized accounts with bad debt or insufficient collateral to cover repayment must be rejected before submitting to consensus.
+
+## 4. Collection Iteration Safety (Map/Set Mutation Guard)
+
+- **NEVER** mutate a `Map` or `Set` (`.set()`, `.delete()`, `.add()`) directly inside a `for (... of map.entries())` or `for (... of set)` loop.
+- In ECMAScript, deleting and re-inserting an entry during iteration causes the iterator to visit it again at the end, leading to an infinite event loop that hangs the engine at 100% CPU.
+- **MANDATORY**: Always snapshot collections into an immutable array before iterating: `const entries = Array.from(collection.entries());`.
+
+## 5. Zero-Capital Solvency & Bad Debt Guard
+
+- An obligation is only eligible for zero-capital liquidation if:
+  `healthFactor < 1.00 && totalDebtUsd > 0.01 && totalCollateralUsd > 0 && collaterals.length > 0`
+- Historical bad debt ($0 collateral) can never be liquidated via flash loan because zero collateral can be seized to repay the borrowed principal. The engine must skip these positions immediately without entering execution queues.
+
+## 6. Cetus CLMM Atomic Flash Swap Invariants
+
+- For high-liquidity Sui pairs, Cetus CLMM `pool::flash_swap` provides superior liquidity compared to protocol-internal flash loans.
+- When assembling atomic flash swap liquidations, the exact borrower position limits and close factor must be checked before building balance splits to prevent Move abort code 2 on over-repayment.
+

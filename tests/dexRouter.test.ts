@@ -47,6 +47,36 @@ describe('DEX Routers (Cetus CLMM & DeepBook v3)', () => {
     expect(quote.poolId).toBeDefined();
   });
 
+  it('should route non-direct pairs via 2-hop SUI routing on Cetus', () => {
+    const CETUS_TYPE = '0x06864a6f921804860930db6ddbe2e16acdf8504495ea7481637a1c8b9a8fe54b::cetus::CETUS';
+    priceCache.updatePrice({
+      symbol: 'CETUS',
+      coinType: CETUS_TYPE,
+      price: 0.25,
+      confidence: 0,
+      exponent: -8,
+      rawPrice: 25000000n,
+      publishTime: 1700000000,
+      lastUpdatedMs: Date.now(),
+    });
+
+    expect(CetusRouter.hasPool(CETUS_TYPE, USDC_TYPE)).toBe(true);
+    const amountIn = 1_000_000_000_000n; // 1000 CETUS ($250)
+    const quote = CetusRouter.getQuote(CETUS_TYPE, USDC_TYPE, amountIn, 100);
+    expect(quote.poolId).toBe('2-hop-via-sui');
+    expect(quote.expectedAmountOut).toBe(250_000_000n); // 250 USDC
+
+    const tx = new Transaction();
+    const mockInputCoin = tx.object('0x1111111111111111111111111111111111111111111111111111111111111111');
+    const outCoin = CetusRouter.addSwap(tx, quote, mockInputCoin);
+    expect(outCoin).toBeDefined();
+
+    const commands = tx.getData().commands;
+    const moveCalls = commands.filter((c: any) => c.$kind === 'MoveCall');
+    // 2 router::swap calls + zero coin helpers
+    expect(moveCalls.length).toBeGreaterThanOrEqual(3);
+  });
+
   it('should accurately resolve DeepBook v3 pools and reject unlisted pairs', () => {
     const DEEP_TYPE = '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP';
     const USDT_TYPE = '0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT';

@@ -1,9 +1,11 @@
 import { suiWsClient } from '../../client/websocket.js';
 import { suiClient, rpcManager } from '../../client/suiClient.js';
 import { NAVI_CONFIG } from '../../config/constants.js';
+import { CONFIG } from '../../config/index.js';
 import { COIN_CONFIGS, getCoinConfigByType } from '../../config/coins.js';
 import { ObligationState, CollateralPosition, DebtPosition } from '../../config/types.js';
 import { HealthFactorEngine } from '../../oracles/healthFactor.js';
+import { priceCache } from '../../oracles/priceCache.js';
 import { logger } from '../../ui/logger.js';
 import * as navi from '@naviprotocol/lending';
 
@@ -89,28 +91,82 @@ export class NaviIndexer {
   }
 
   public addBorrower(address: string): void {
+    const normalized = address.toLowerCase();
+    if (
+      normalized === '0x0000000000000000000000000000000000000000000000000000000000000000' ||
+      normalized === '0x0' ||
+      normalized === CONFIG.operatorAddress.toLowerCase()
+    ) {
+      return;
+    }
     this.knownBorrowers.add(address);
   }
 
-  public async discoverBorrowersFromHistory(): Promise<void> {
+  public async discoverBorrowersFromHistory(maxPages: number = 20): Promise<void> {
     try {
-      logger.info('Querying recent NAVI lending events to discover active borrowers...');
-      const events = await rpcManager.executeWithFallback('naviQueryEvents', (client) =>
-        client.queryEvents({
-          query: { MoveModule: { package: NAVI_CONFIG.packageId, module: 'lending' } },
-          limit: 50,
-        })
-      );
-
-      for (const ev of events.data) {
-        const json = ev.parsedJson as Record<string, unknown> | undefined;
-        const sender = (json?.sender || json?.borrower || json?.user) as string | undefined;
-        if (sender && typeof sender === 'string' && sender.startsWith('0x')) {
-          this.addBorrower(sender);
+      logger.info('Querying historical NAVI lending & incentive events with cursor pagination...');
+      
+      // 1. Paginate lending events
+      let lendingCursor: any = null;
+      let lendingPages = 0;
+      while (lendingPages < maxPages) {
+        try {
+          const res = await rpcManager.executeWithFallback('naviQueryLendingEvents', (client) =>
+            client.queryEvents({
+              query: { MoveModule: { package: NAVI_CONFIG.packageId, module: 'lending' } },
+              cursor: lendingCursor,
+              limit: 100,
+            })
+          );
+          lendingPages++;
+          if (res.data) {
+            for (const ev of res.data) {
+              const json = ev.parsedJson as Record<string, unknown> | undefined;
+              const sender = (json?.sender || json?.borrower || json?.user || json?.recipient) as string | undefined;
+              if (sender && typeof sender === 'string' && sender.startsWith('0x')) {
+                this.addBorrower(sender);
+              }
+            }
+          }
+          if (!res.hasNextPage || !res.nextCursor) break;
+          lendingCursor = res.nextCursor;
+        } catch (err) {
+          logger.debug({ error: err }, 'Error during NAVI lending event pagination');
+          break;
         }
       }
 
-      logger.info(`Discovered ${this.knownBorrowers.size} active NAVI borrower accounts`);
+      // 2. Paginate incentive_v3 events
+      let incentiveCursor: any = null;
+      let incentivePages = 0;
+      while (incentivePages < maxPages) {
+        try {
+          const res = await rpcManager.executeWithFallback('naviQueryIncentiveEvents', (client) =>
+            client.queryEvents({
+              query: { MoveModule: { package: NAVI_CONFIG.packageId, module: 'incentive_v3' } },
+              cursor: incentiveCursor,
+              limit: 100,
+            })
+          );
+          incentivePages++;
+          if (res.data) {
+            for (const ev of res.data) {
+              const json = ev.parsedJson as Record<string, unknown> | undefined;
+              const sender = (json?.sender || json?.borrower || json?.user || json?.recipient) as string | undefined;
+              if (sender && typeof sender === 'string' && sender.startsWith('0x')) {
+                this.addBorrower(sender);
+              }
+            }
+          }
+          if (!res.hasNextPage || !res.nextCursor) break;
+          incentiveCursor = res.nextCursor;
+        } catch (err) {
+          logger.debug({ error: err }, 'Error during NAVI incentive event pagination');
+          break;
+        }
+      }
+
+      logger.info(`Discovered ${this.knownBorrowers.size} active NAVI borrower accounts across ${lendingPages + incentivePages} historical pages`);
       await this.refreshAllBorrowers();
     } catch (err) {
       logger.warn({ error: err }, 'Could not fetch historical NAVI events');
@@ -118,8 +174,11 @@ export class NaviIndexer {
   }
 
   public async refreshAllBorrowers(): Promise<void> {
-    for (const borrower of this.knownBorrowers) {
-      await this.refreshBorrowerState(borrower);
+    const borrowers = Array.from(this.knownBorrowers);
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < borrowers.length; i += BATCH_SIZE) {
+      const batch = borrowers.slice(i, i + BATCH_SIZE);
+      await Promise.allSettled(batch.map((b) => this.refreshBorrowerState(b)));
     }
   }
 
@@ -132,18 +191,43 @@ export class NaviIndexer {
       const collaterals: CollateralPosition[] = [];
       const debts: DebtPosition[] = [];
 
+      function parseNaviAmount(amtStr: string | number | undefined, decimals: number): bigint {
+        if (!amtStr) return 0n;
+        const s = String(amtStr).trim();
+        if (!s || s === '0') return 0n;
+        if (s.includes('.')) {
+          const [intPart, fracPartRaw] = s.split('.');
+          const fracPart = (fracPartRaw || '').padEnd(decimals, '0').slice(0, decimals);
+          return BigInt(intPart + fracPart);
+        }
+        return BigInt(s) * (10n ** BigInt(decimals));
+      }
+
       for (const pos of positions) {
         if (pos.type === 'navi-lending-supply' && pos['navi-lending-supply']) {
           const supply = pos['navi-lending-supply'];
           const coinType = supply.token.coinType;
-          const rawAmount = BigInt(supply.amount ?? '0');
+          const cfg = getCoinConfigByType(coinType);
+          const decimals = cfg?.decimals ?? supply.token.decimals ?? 9;
+          const rawAmount = parseNaviAmount(supply.amount, decimals);
+          if (supply.token?.price && supply.token.price > 0) {
+            priceCache.updatePrice({
+              symbol: cfg?.symbol ?? supply.token.symbol ?? 'UNKNOWN',
+              coinType,
+              price: Number(supply.token.price),
+              confidence: 0,
+              exponent: -decimals,
+              rawPrice: BigInt(Math.floor(Number(supply.token.price) * Math.pow(10, decimals))),
+              publishTime: Math.floor(Date.now() / 1000),
+              lastUpdatedMs: Date.now(),
+            });
+          }
           if (rawAmount > 0n) {
-            const cfg = getCoinConfigByType(coinType);
             collaterals.push({
               coinType,
               symbol: cfg?.symbol ?? supply.token.symbol ?? 'UNKNOWN',
               amount: rawAmount,
-              decimals: cfg?.decimals ?? supply.token.decimals ?? 9,
+              decimals,
               valueUsd: 0,
               liquidationThreshold: cfg?.liquidationThreshold ?? 0.80,
             });
@@ -151,28 +235,42 @@ export class NaviIndexer {
         } else if (pos.type === 'navi-lending-borrow' && pos['navi-lending-borrow']) {
           const borrow = pos['navi-lending-borrow'];
           const coinType = borrow.token.coinType;
-          const rawAmount = BigInt(borrow.amount ?? '0');
+          const cfg = getCoinConfigByType(coinType);
+          const decimals = cfg?.decimals ?? borrow.token.decimals ?? 9;
+          const rawAmount = parseNaviAmount(borrow.amount, decimals);
+          if (borrow.token?.price && borrow.token.price > 0) {
+            priceCache.updatePrice({
+              symbol: cfg?.symbol ?? borrow.token.symbol ?? 'UNKNOWN',
+              coinType,
+              price: Number(borrow.token.price),
+              confidence: 0,
+              exponent: -decimals,
+              rawPrice: BigInt(Math.floor(Number(borrow.token.price) * Math.pow(10, decimals))),
+              publishTime: Math.floor(Date.now() / 1000),
+              lastUpdatedMs: Date.now(),
+            });
+          }
           if (rawAmount > 0n) {
-            const cfg = getCoinConfigByType(coinType);
             debts.push({
               coinType,
               symbol: cfg?.symbol ?? borrow.token.symbol ?? 'UNKNOWN',
               amount: rawAmount,
-              decimals: cfg?.decimals ?? borrow.token.decimals ?? 9,
+              decimals,
               valueUsd: 0,
             });
           }
         } else if (pos.type === 'navi-lending-emode-supply' && pos['navi-lending-emode-supply']) {
           const supply = pos['navi-lending-emode-supply'];
           const coinType = supply.token.coinType;
-          const rawAmount = BigInt(supply.amount ?? '0');
+          const cfg = getCoinConfigByType(coinType);
+          const decimals = cfg?.decimals ?? supply.token.decimals ?? 9;
+          const rawAmount = parseNaviAmount(supply.amount, decimals);
           if (rawAmount > 0n) {
-            const cfg = getCoinConfigByType(coinType);
             collaterals.push({
               coinType,
               symbol: cfg?.symbol ?? supply.token.symbol ?? 'UNKNOWN',
               amount: rawAmount,
-              decimals: cfg?.decimals ?? supply.token.decimals ?? 9,
+              decimals,
               valueUsd: 0,
               liquidationThreshold: cfg?.liquidationThreshold ?? 0.85,
             });
@@ -180,14 +278,15 @@ export class NaviIndexer {
         } else if (pos.type === 'navi-lending-emode-borrow' && pos['navi-lending-emode-borrow']) {
           const borrow = pos['navi-lending-emode-borrow'];
           const coinType = borrow.token.coinType;
-          const rawAmount = BigInt(borrow.amount ?? '0');
+          const cfg = getCoinConfigByType(coinType);
+          const decimals = cfg?.decimals ?? borrow.token.decimals ?? 9;
+          const rawAmount = parseNaviAmount(borrow.amount, decimals);
           if (rawAmount > 0n) {
-            const cfg = getCoinConfigByType(coinType);
             debts.push({
               coinType,
               symbol: cfg?.symbol ?? borrow.token.symbol ?? 'UNKNOWN',
               amount: rawAmount,
-              decimals: cfg?.decimals ?? borrow.token.decimals ?? 9,
+              decimals,
               valueUsd: 0,
             });
           }

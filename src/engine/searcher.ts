@@ -81,7 +81,7 @@ export class LiquidationSearcher {
     pythService.onPriceUpdate(() => {
       this.handlePriceTick();
     });
-    await pythService.start(2000);
+    await pythService.start(1000);
 
     // Continuous tick loop
     setInterval(() => {
@@ -132,7 +132,7 @@ export class LiquidationSearcher {
       const targets = obligationRegistry.getImmediateTargets();
       for (const target of targets) {
         const opp = HealthFactorEngine.findBestLiquidationOpportunity(target);
-        if (opp) {
+        if (opp && opp.expectedGrossProfitUsd >= CONFIG.minProfitUsd) {
           await this.executeLiquidationPipeline(opp);
         }
       }
@@ -157,10 +157,11 @@ export class LiquidationSearcher {
         '🎯 LIQUIDATION OPPORTUNITY IDENTIFIED — BUILDING ZERO-CAPITAL PTB'
       );
 
-      // STEP 1: Construct atomic PTB
-      const builtPtb = ZeroCapitalPtbBuilder.buildLiquidationPTB(opportunity);
+      // STEP 1: Construct atomic PTB (with async oracle freshness and unlock handling)
+      const builtPtb = await ZeroCapitalPtbBuilder.buildLiquidationPTBAsync(opportunity);
 
       // STEP 2: Pre-flight simulation
+      // Mandate devInspect simulation on ALL liquidations to guarantee safety and prevent on-chain MoveAbort 1606 (user_is_healthy)
       this.stats.totalSimulations++;
       const simResult = await PreFlightSimulator.simulate(builtPtb.tx, opportunity);
 
@@ -172,13 +173,14 @@ export class LiquidationSearcher {
         return false;
       }
       this.stats.successfulSimulations++;
+      const simulatedProfitUsd = simResult.netProfitUsd;
 
       // STEP 3: Execute transaction
       this.stats.totalLiquidationsAttempted++;
       const execResult = await TransactionExecutor.execute(
         builtPtb.tx,
         opportunity,
-        simResult.netProfitUsd
+        simulatedProfitUsd
       );
 
       if (execResult.success) {

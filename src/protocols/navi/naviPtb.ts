@@ -87,6 +87,42 @@ export class NaviPtbBuilder {
   }
 
   /**
+   * Add NAVI Liquidation returning raw Balance objects (Balance<Collateral>, Balance<LeftoverDebt>)
+   */
+  public static addLiquidateBalances(
+    tx: Transaction,
+    debtCoinType: string,
+    debtAssetId: number,
+    debtPoolContract: string,
+    debtBalanceInput: TransactionObjectArgument,
+    collateralCoinType: string,
+    collateralAssetId: number,
+    collateralPoolContract: string,
+    borrowerAddress: string
+  ): [TransactionObjectArgument, TransactionObjectArgument] {
+    const [collateralBalance, leftoverDebtBalance] = tx.moveCall({
+      target: `${NAVI_CONFIG.packageId}::incentive_v3::liquidation_v2`,
+      arguments: [
+        tx.object(SUI_CLOCK_OBJECT_ID),
+        tx.object(NAVI_CONFIG.priceOracle),
+        tx.object(NAVI_CONFIG.storage),
+        tx.pure.u8(debtAssetId),
+        tx.object(debtPoolContract),
+        debtBalanceInput,
+        tx.pure.u8(collateralAssetId),
+        tx.object(collateralPoolContract),
+        tx.pure.address(borrowerAddress),
+        tx.object(NAVI_CONFIG.incentiveV2),
+        tx.object(NAVI_CONFIG.incentiveV3),
+        tx.object(SUI_SYSTEM_STATE_OBJECT_ID),
+      ],
+      typeArguments: [debtCoinType, collateralCoinType],
+    });
+
+    return [collateralBalance, leftoverDebtBalance];
+  }
+
+  /**
    * Add NAVI Flash Loan Repayment to PTB
    */
   public static addRepayFlashLoan(

@@ -22,11 +22,9 @@ export class TransactionExecutor {
 
     // Set priority gas price to front-run competing searchers via Dynamic Priority Gas Auction (PGA)
     try {
-      const refGasPrice = await rpcManager.executeWithFallback('getReferenceGasPrice', (client) =>
-        client.getReferenceGasPrice()
-      );
+      const refGasPrice = await this.getReferenceGasPrice();
       const priorityGasPrice = this.calculatePriorityGasPrice(
-        BigInt(refGasPrice),
+        refGasPrice,
         opportunity.expectedGrossProfitUsd,
         suiPriceUsd
       );
@@ -83,7 +81,10 @@ export class TransactionExecutor {
         '🚀 BROADCASTING LIVE LIQUIDATION PTB TO SUI CONSENSUS...'
       );
 
-      const response = await rpcManager.executeWithFallback(
+      // 🏁 PARALLEL BROADCAST RACE — fire to ALL healthy RPCs simultaneously
+      // Whichever endpoint confirms first wins; others are abandoned.
+      // Saves 50–150ms vs sequential tryout on a congested block.
+      const response = await rpcManager.executeBroadcastRace(
         'signAndExecuteTransaction',
         async (client) => {
           return await client.signAndExecuteTransaction({
@@ -175,20 +176,57 @@ export class TransactionExecutor {
     return calculatedGasPrice;
   }
 
+  private static cachedRefGasPrice: bigint | null = null;
+  private static lastRefGasPriceTimeMs: number = 0;
+  private static cachedGasBalance: { balanceMist: bigint; balanceSui: number; lastCheckedMs: number } | null = null;
+
+  /**
+   * Cached Reference Gas Price (valid for 30s to avoid latency on execution hot path)
+   */
+  public static async getReferenceGasPrice(): Promise<bigint> {
+    const now = Date.now();
+    if (this.cachedRefGasPrice && now - this.lastRefGasPriceTimeMs < 30_000) {
+      return this.cachedRefGasPrice;
+    }
+
+    try {
+      const price = await rpcManager.executeWithFallback('getReferenceGasPrice', (client) =>
+        client.getReferenceGasPrice()
+      );
+      this.cachedRefGasPrice = BigInt(price);
+      this.lastRefGasPriceTimeMs = now;
+      return this.cachedRefGasPrice;
+    } catch (e) {
+      return this.cachedRefGasPrice ?? 1000n;
+    }
+  }
+
   /**
    * Check operator wallet SUI balance and verify sufficiency for gas budget.
+   * Caches balance for 5 seconds during burst liquidation sequences.
    */
-  public static async checkOperatorGasBalance(): Promise<{
+  public static async checkOperatorGasBalance(forceRefresh: boolean = false): Promise<{
     balanceMist: bigint;
     balanceSui: number;
     isSufficient: boolean;
   }> {
+    const now = Date.now();
+    if (!forceRefresh && this.cachedGasBalance && now - this.cachedGasBalance.lastCheckedMs < 5_000) {
+      return {
+        balanceMist: this.cachedGasBalance.balanceMist,
+        balanceSui: this.cachedGasBalance.balanceSui,
+        isSufficient: this.cachedGasBalance.balanceMist >= BigInt(CONFIG.gasBudget),
+      };
+    }
+
     try {
       const balance = await rpcManager.executeWithFallback('getBalance', (client) =>
         client.getBalance({ owner: CONFIG.operatorAddress })
       );
       const balanceMist = BigInt(balance.totalBalance);
       const balanceSui = Number(balanceMist) / 1e9;
+      this.cachedGasBalance = { balanceMist, balanceSui, lastCheckedMs: now };
+
       return {
         balanceMist,
         balanceSui,

@@ -25,15 +25,25 @@ export const SCALLOP_CONFIG = {
   xOracle: '0x93d5bf0936b71eb27255941e532fac33b5a5c7759e377b4923af0a1359ad494f',
   protocolPkg: '0xde5c09ad171544aa3724dc67216668c80e754860f419136a68d78504eb2e2805',
   upgradedProtocolPkg: '0xde5c09ad171544aa3724dc67216668c80e754860f419136a68d78504eb2e2805',
+  borrowIncentivePkg: '0x74922703605ba0548a55188098d6ebc8fdeb9fe16993986f1b7c9a49036c7c9c',
+  borrowIncentiveConfig: '0xdf5d04b4691cc67e82fd4db8394d89ff44823a9de29716c924f74bb4f11cc1f7',
+  borrowIncentivePools: '0x6547e143d406b5ccd5f46aae482497de279cc1a68c406f701df70a05f9212ab4',
+  borrowIncentiveAccounts: '0xc4701fdbc1c92f9a636d334d66012b3027659e9fb8aff27279a82edfb6b77d02',
+  vescaSubsTable: '0x064ae57829a1224b05d209da729ab77647ab70a21a82a933a5070639d15af490',
+  vescaSubsWhitelist: '0xaa0a920bf20b43aa1a8c19cf39df457a835ce98b2820a0d1090420a7e5ff66fe',
 };
 
 // Cetus CLMM Mainnet Configuration
 export const CETUS_CONFIG = {
   clmmPoolPackageId: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
-  integratePackageId: '0xb2db7142fa83210a7d78d9c12ac49c043b3cbbd482224fea6e3da00aa5a5ae2d',
+  activeClmmPackageId: '0x25ebb9a7c50eb17b3fa9c5a30fb8b5ad8f97caaf4928943acbcff7153dfee5e3',
+  // Cetus Router / Integrate package (upgraded to v16 on mainnet)
+  integratePackageId: '0xae9c208cf58fd5ba36737c9ee5dcfa7f152d0fb5a5a99eebb7c881ebc2fe59e0',
+  clmmPackageId: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
   globalConfigId: '0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f',
   // Canonical high-liquidity Cetus pools (verified on-chain)
   pools: {
+    'USDC_SUI': '0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105',
     'SUI_USDC': '0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105',
     'CETUS_SUI': '0x2e041f3fd93646dcc877f783c1f2b7fa62d30271bdef1f21ef002cebf857bded',
     'DEEP_SUI': '0xe01243f37f712ef87e556afb9b1d03d0fae13f96d324ec912daffc339dfdcbd2',

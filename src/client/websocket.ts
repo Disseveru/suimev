@@ -14,6 +14,7 @@ export class SuiWebSocketClient {
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private pingInterval: NodeJS.Timeout | null = null;
   private messageId = 1;
+  private reconnectAttempts = 0; // For exponential backoff
   private subscriptions: Map<number, { filter: Record<string, unknown>; handler: SuiEventHandler }> = new Map();
   private pendingRequests: Map<number, (subscriptionId: number) => void> = new Map();
   private serverSubIdToHandler: Map<number, SuiEventHandler> = new Map();
@@ -35,6 +36,7 @@ export class SuiWebSocketClient {
 
         this.ws.on('open', () => {
           this.isConnecting = false;
+          this.reconnectAttempts = 0; // Reset backoff on successful connection
           logger.info('Sui WebSocket connection established');
           this.startHeartbeat();
           this.resubscribeAll();
@@ -159,8 +161,13 @@ export class SuiWebSocketClient {
   private scheduleReconnect(): void {
     if (this.reconnectTimeout || this.isClosedManually) return;
 
-    const delay = 3000;
-    logger.info(`Scheduling WebSocket reconnect in ${delay}ms...`);
+    this.reconnectAttempts++;
+    // Exponential backoff: 3s, 6s, 12s, 24s, up to 30s max + small jitter
+    const baseDelay = Math.min(30_000, 3000 * Math.pow(2, Math.min(this.reconnectAttempts - 1, 4)));
+    const jitter = Math.floor(Math.random() * 1000);
+    const delay = baseDelay + jitter;
+
+    logger.info(`Scheduling WebSocket reconnect (attempt ${this.reconnectAttempts}) in ${delay}ms...`);
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
       this.connect();

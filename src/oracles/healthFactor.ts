@@ -17,6 +17,24 @@ export class HealthFactorEngine {
     let liquidationThresholdCollateralUsd = 0;
     let totalDebtUsd = 0;
 
+    const isNavi = obligation.protocol === 'navi';
+    const isStable = (s: string) => {
+      const sym = s.toUpperCase();
+      return sym.includes('USD') || sym === 'BUCK';
+    };
+    const isSuiLst = (s: string) => {
+      const sym = s.toUpperCase();
+      return sym === 'SUI' || sym === 'VSUI' || sym === 'HASUI' || sym === 'AFSUI';
+    };
+
+    const allColStable = obligation.collaterals.length > 0 && obligation.collaterals.every(c => isStable(c.symbol));
+    const allDebtStable = obligation.debts.length > 0 && obligation.debts.every(d => isStable(d.symbol));
+    const isStableEmode = isNavi && allColStable && allDebtStable;
+
+    const allColSui = obligation.collaterals.length > 0 && obligation.collaterals.every(c => isSuiLst(c.symbol));
+    const allDebtSui = obligation.debts.length > 0 && obligation.debts.every(d => isSuiLst(d.symbol));
+    const isSuiEmode = isNavi && allColSui && allDebtSui;
+
     // Recalculate collateral positions
     for (const col of obligation.collaterals) {
       const price = priceCache.getPriceUsd(col.coinType);
@@ -24,7 +42,8 @@ export class HealthFactorEngine {
       col.valueUsd = normAmount * price;
 
       totalCollateralUsd += col.valueUsd;
-      liquidationThresholdCollateralUsd += col.valueUsd * col.liquidationThreshold;
+      const effectiveLt = isStableEmode ? 0.92 : isSuiEmode ? 0.93 : col.liquidationThreshold;
+      liquidationThresholdCollateralUsd += col.valueUsd * effectiveLt;
     }
 
     // Recalculate debt positions
@@ -47,7 +66,7 @@ export class HealthFactorEngine {
       : Infinity;
 
     obligation.healthFactor = healthFactor;
-    obligation.isLiquidatable = healthFactor < 1.0 && totalDebtUsd > 0.01;
+    obligation.isLiquidatable = healthFactor < 1.0 && totalDebtUsd > 0.01 && totalCollateralUsd > 0;
     obligation.lastUpdatedMs = Date.now();
 
     return obligation;

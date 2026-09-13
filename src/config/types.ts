@@ -60,6 +60,7 @@ export interface ObligationState {
   lastUpdatedMs: number;
   // Protocol specific metadata
   scallopObligationKey?: string;
+  liquidateLocked?: boolean;
   naviAccountCap?: string;
 }
 

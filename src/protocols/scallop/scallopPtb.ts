@@ -80,4 +80,32 @@ export class ScallopPtbBuilder {
       typeArguments: [coinType],
     });
   }
+
+  /**
+   * Add Scallop Force Unstake Unhealthy (for obligations locked in borrow incentives)
+   * Must be called before liquidate if obligation.liquidate_locked == true
+   */
+  public static addForceUnstakeUnhealthy(
+    tx: Transaction,
+    obligationId: string,
+    overrides?: Partial<typeof SCALLOP_CONFIG>
+  ): void {
+    const cfg = { ...SCALLOP_CONFIG, ...overrides };
+    tx.moveCall({
+      target: `${cfg.borrowIncentivePkg}::user::force_unstake_unhealthy_v3`,
+      arguments: [
+        tx.object(cfg.borrowIncentiveConfig),
+        tx.object(cfg.borrowIncentivePools),
+        tx.object(cfg.borrowIncentiveAccounts),
+        tx.object(cfg.version),
+        tx.object(obligationId),
+        tx.object(cfg.market),
+        tx.object(cfg.coinDecimalsRegistry),
+        tx.object(cfg.xOracle),
+        tx.object(cfg.vescaSubsTable),
+        tx.object(cfg.vescaSubsWhitelist),
+        tx.object(SUI_CLOCK_OBJECT_ID),
+      ],
+    });
+  }
 }

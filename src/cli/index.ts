@@ -45,14 +45,27 @@ async function main() {
       }
 
       const all = obligationRegistry.getAllObligations();
-      console.log(chalk.green(`\nFound ${all.length} total monitored obligation(s).`));
+      const liquidatable = all.filter((o) => o.healthFactor < 1.0);
+      const atRisk = all.filter((o) => o.healthFactor >= 1.0 && o.healthFactor < 1.05);
+      const safe = all.filter((o) => o.healthFactor >= 1.05);
 
+      console.log(chalk.bold.green(`\n📊 Scan Summary across Monitored Protocols:`));
+      console.log(chalk.white(`  Total Obligations Monitored: ${chalk.bold.cyan(all.length.toString())}`));
+      console.log(chalk.white(`  Liquidatable (HF < 1.00):     ${liquidatable.length > 0 ? chalk.bold.red(liquidatable.length.toString()) : chalk.green('0')}`));
+      console.log(chalk.white(`  At Risk (1.00 <= HF < 1.05):  ${atRisk.length > 0 ? chalk.bold.yellow(atRisk.length.toString()) : chalk.green('0')}`));
+      console.log(chalk.white(`  Safe (HF >= 1.05):            ${chalk.green(safe.length.toString())}`));
+
+      // Sort by health factor ascending so critical positions are shown first
+      const sorted = [...all].sort((a, b) => a.healthFactor - b.healthFactor);
+      const displayCount = Math.min(sorted.length, 30);
+
+      console.log(chalk.cyan(`\nTop ${displayCount} Priority Obligations (Sorted by Health Factor):`));
       const table = new Table({
         head: ['Protocol', 'Account / ID', 'Collateral USD', 'Debt USD', 'Health Factor', 'Status'],
         colWidths: [12, 34, 18, 16, 16, 16],
       });
 
-      for (const obl of all) {
+      for (const obl of sorted.slice(0, displayCount)) {
         const hf = obl.healthFactor;
         const status = hf < 1.0 ? chalk.red.bold('LIQUIDATABLE') : hf < 1.05 ? chalk.yellow('AT RISK') : chalk.green('SAFE');
         table.push([
@@ -66,6 +79,9 @@ async function main() {
       }
 
       console.log(table.toString());
+      if (sorted.length > displayCount) {
+        console.log(chalk.gray(`... and ${sorted.length - displayCount} additional safe obligations monitored.`));
+      }
       process.exit(0);
 
     case 'simulate':
@@ -330,8 +346,8 @@ async function main() {
         console.log(`Expected Seized: ${opp.collateralToReceive} ${opp.collateralSymbol} ($${opp.collateralReceiveUsd.toFixed(2)})`);
         console.log(`Gross Profit Estimate: $${opp.expectedGrossProfitUsd.toFixed(2)}`);
 
-        console.log(chalk.cyan('Assembling zero-capital atomic PTB...'));
-        const built = ZeroCapitalPtbBuilder.buildLiquidationPTB(opp);
+        console.log(chalk.cyan('Assembling zero-capital atomic PTB (with Pyth oracles & unlock handling)...'));
+        const built = await ZeroCapitalPtbBuilder.buildLiquidationPTBAsync(opp);
 
         console.log(chalk.cyan('Running pre-flight simulation (devInspectTransactionBlock)...'));
         const sim = await PreFlightSimulator.simulate(built.tx, opp);
@@ -360,8 +376,72 @@ async function main() {
       process.exit(0);
     }
 
+    case 'whale': {
+      const targetId = process.argv[3] || '0x33fee6c01c25a4925ca053df2c99f0cb9d0c5c4985595b6e8eee5b66ebedb277';
+      console.log(chalk.bold.cyan(`\n🐋 Targeting Whale Obligation: ${targetId}...`));
+
+      await pythService.fetchLatestPrices();
+      await scallopProtocol.initialize();
+
+      const state = await scallopIndexer.refreshObligationState(targetId);
+      if (!state) {
+        console.log(chalk.red('Could not fetch obligation state on-chain.'));
+        process.exit(1);
+      }
+
+      HealthFactorEngine.evaluateObligation(state);
+      console.log({
+        obligationId: state.obligationId,
+        healthFactor: state.healthFactor.toFixed(4),
+        totalDebtUsd: `$${state.totalDebtUsd.toFixed(2)}`,
+        totalCollateralUsd: `$${state.totalCollateralUsd.toFixed(2)}`,
+        debts: state.debts.map(d => `${d.symbol} ($${d.valueUsd.toFixed(2)})`),
+        collaterals: state.collaterals.map(c => `${c.symbol} ($${c.valueUsd.toFixed(2)})`)
+      });
+
+      const opp = HealthFactorEngine.findBestLiquidationOpportunity(state);
+      if (!opp) {
+        console.log(chalk.red('No liquidation opportunity found for this account.'));
+        process.exit(1);
+      }
+
+      console.log(chalk.green(`\nOpportunity Selected: Repay ${opp.debtAmountToRepay} ${opp.debtSymbol} ($${opp.debtRepayUsd.toFixed(2)}) -> Seize ${opp.collateralToReceive} ${opp.collateralSymbol} ($${opp.collateralReceiveUsd.toFixed(2)})`));
+      console.log(chalk.green(`Expected Gross Profit: $${opp.expectedGrossProfitUsd.toFixed(2)} USD`));
+
+      console.log(chalk.cyan('Assembling zero-capital liquidation PTB with live Pyth feeds...'));
+      const built = await ZeroCapitalPtbBuilder.buildLiquidationPTBAsync(opp);
+
+      const txData = (built.tx as any).getData();
+      console.log(chalk.yellow(`PTB Commands Count: ${txData.commands.length}, Inputs Count: ${txData.inputs.length}`));
+      for (let i = 0; i < Math.min(10, txData.commands.length); i++) {
+        console.log(chalk.gray(`Command ${i}:`), JSON.stringify(txData.commands[i]));
+      }
+      if (txData.commands[2]) {
+        console.log(chalk.magenta('Command 2 Details:'), JSON.stringify(txData.commands[2], null, 2));
+      }
+      for (let i = 0; i <= 3; i++) {
+        console.log(chalk.blue(`Input ${i}:`), JSON.stringify(txData.inputs[i]));
+      }
+
+      console.log(chalk.cyan('Simulating PTB via devInspect...'));
+      const sim = await PreFlightSimulator.simulate(built.tx, opp);
+
+      console.log(chalk.bold('\n--- SIMULATION RESULT ---'));
+      console.log(`Success: ${sim.success ? chalk.green.bold('TRUE') : chalk.red.bold('FALSE')}`);
+      console.log(`Net Profit: $${sim.netProfitUsd.toFixed(2)} USD`);
+      console.log(`Gas Used: ${sim.gasUsedSui.toFixed(4)} SUI`);
+      if (sim.errorMessage) {
+        console.log(chalk.yellow(`Error Message: ${sim.errorMessage}`));
+      }
+
+      if (sim.success && sim.isProfitable) {
+        console.log(chalk.bold.green('\n🎉 SIMULATION 100% SUCCESSFUL AND PROFITABLE! READY FOR CONSENSUS BROADCAST!'));
+      }
+      process.exit(sim.success ? 0 : 1);
+    }
+
     default:
-      console.log(`Unknown command: ${command}. Available: start, scan, simulate, benchmark, replay, sentio, alchemy, wallet, execute`);
+      console.log(`Unknown command: ${command}. Available: start, scan, simulate, benchmark, replay, sentio, alchemy, wallet, execute, whale`);
       process.exit(1);
   }
 }

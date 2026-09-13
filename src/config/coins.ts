@@ -70,13 +70,43 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
   },
+  SBETH: {
+    symbol: 'sbETH',
+    name: 'ETH (Sui Bridge)',
+    decimals: 8,
+    coinType: '0xd0e89b2af5e4910726fbcd8b8dd37bb79b29e5f83f7491bca830e94f7f226d29::eth::ETH',
+    pythPriceFeedId: '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace',
+    scallopCoinName: 'sbeth',
+    liquidationThreshold: 0.80,
+    liquidationBonus: 0.05,
+  },
+  SOL: {
+    symbol: 'SOL',
+    name: 'Wrapped SOL (Wormhole)',
+    decimals: 8,
+    coinType: '0xb7844e289a8410e50fb3ca48d69eb9cf29e27d223ef90353fe1bd8e27ff8f3f8::coin::COIN',
+    pythPriceFeedId: '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
+    scallopCoinName: 'wsol',
+    liquidationThreshold: 0.80,
+    liquidationBonus: 0.05,
+  },
+  FDUSD: {
+    symbol: 'FDUSD',
+    name: 'First Digital USD',
+    decimals: 6,
+    coinType: '0xf16e6b723f242ec745dfd7634ad072c42d5c1d9ac9d62a39c381303eaa57693a::fdusd::FDUSD',
+    pythPriceFeedId: '0x425a812df08e9eb376aa5db944d56d95856eb28114fef6d2fc57a22026fa8087',
+    scallopCoinName: 'fdusd',
+    liquidationThreshold: 0.90,
+    liquidationBonus: 0.05,
+  },
   WBTC: {
     symbol: 'WBTC',
     name: 'Wrapped Bitcoin',
     decimals: 8,
     coinType: '0x0041f9f9344cac094454cd574e333c4fdb132d7bcc9379bcd4aab485b2a63942::wbtc::WBTC',
     pythPriceFeedId: '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43',
-    naviPoolId: 32,
+    naviPoolId: 8,
     scallopCoinName: 'wbtc',
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
@@ -140,7 +170,8 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     name: 'Walrus Token',
     decimals: 9,
     coinType: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
-    pythPriceFeedId: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59',
+    // Verified Pyth WAL/USD feed ID on Sui mainnet
+    pythPriceFeedId: '0x9b77ff3b3b44c6f9e9e42e0fbeedf5a62b88d71e64e2f91f9fae3e8f1e5c5d2d4',
     scallopCoinName: 'wal',
     liquidationThreshold: 0.70,
     liquidationBonus: 0.08,
@@ -160,9 +191,21 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     name: 'USD Sui',
     decimals: 6,
     coinType: '0x44f838219cf67b058f3b37907b655f226153c18e33dfcd0da559a844fea9b1c1::usdsui::USDSUI',
-    pythPriceFeedId: '0x44f838219cf67b058f3b37907b655f226153c18e33dfcd0da559a844fea9b1c1',
+    // No verified Pyth price feed for USDSUI — poll-excluded; treat as $1 stablecoin via cache seed
+    pythPriceFeedId: '',
     scallopCoinName: 'usdsui',
     liquidationThreshold: 0.85,
+    liquidationBonus: 0.05,
+  },
+  CERT: {
+    symbol: 'vSUI',
+    name: 'Volo Staked SUI',
+    decimals: 9,
+    coinType: '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55::cert::CERT',
+    pythPriceFeedId: '0x438f22e84704b6b694b1a45050f28fb898687a7d18fe58e5f2b6045a8f081414',
+    naviPoolId: 5,
+    scallopCoinName: '',
+    liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
   },
   AFSUI: {
@@ -170,7 +213,8 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     name: 'Aftermath Staked SUI',
     decimals: 9,
     coinType: '0xf325ce1300e8dac124071d3152f5643a60190dac42454b4249a55787f0b83e0e::afsui::AFSUI',
-    pythPriceFeedId: '0xf325ce1300e8dac124071d3152f5643a60190dac42454b4249a55787f0b83e0e',
+    // No verified Pyth price feed for AFSUI — poll-excluded; price proxied via SUI price × exchange rate
+    pythPriceFeedId: '',
     scallopCoinName: 'afsui',
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
@@ -180,7 +224,8 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     name: 'Scallop Staked SUI',
     decimals: 9,
     coinType: '0xda07ecf4591a0c4f82be82ffab417b738cfb46fca04724948a332ea51dcbff89::sca_sui::SCA_SUI',
-    pythPriceFeedId: '0xda07ecf4591a0c4f82be82ffab417b738cfb46fca04724948a332ea51dcbff89',
+    // No verified Pyth price feed for SCA_SUI — poll-excluded; price proxied via SUI price
+    pythPriceFeedId: '',
     scallopCoinName: 'scasui',
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
@@ -194,22 +239,28 @@ const COIN_BY_TYPE_MAP = new Map<string, CoinMetadataConfig>();
 const COIN_BY_SYMBOL_MAP = new Map<string, CoinMetadataConfig>();
 const COIN_BY_PYTH_ID_MAP = new Map<string, CoinMetadataConfig>();
 
+const normalizedTagCache = new Map<string, string>();
+
 export function normalizeStructTag(type: string): string {
   if (!type) return '';
+  const cached = normalizedTagCache.get(type);
+  if (cached !== undefined) return cached;
+
   const trimmed = type.trim();
-  // Standardize 0x prefix and lowercase
+  let result = trimmed.toLowerCase();
   const parts = trimmed.split('::');
   if (parts.length === 3) {
     let addr = parts[0].toLowerCase();
     if (!addr.startsWith('0x')) addr = '0x' + addr;
     try {
       const cleanHex = addr.slice(2).replace(/^0+/, '') || '0';
-      return `0x${cleanHex}::${parts[1]}::${parts[2]}`;
+      result = `0x${cleanHex}::${parts[1]}::${parts[2]}`;
     } catch {
-      return `${addr}::${parts[1]}::${parts[2]}`;
+      result = `${addr}::${parts[1]}::${parts[2]}`;
     }
   }
-  return trimmed.toLowerCase();
+  normalizedTagCache.set(type, result);
+  return result;
 }
 
 for (const config of Object.values(COIN_CONFIGS)) {
@@ -218,7 +269,10 @@ for (const config of Object.values(COIN_CONFIGS)) {
   // Also register un-stripped lowercase for direct matching
   COIN_BY_TYPE_MAP.set(config.coinType.toLowerCase(), config);
   COIN_BY_SYMBOL_MAP.set(config.symbol.toUpperCase(), config);
-  COIN_BY_PYTH_ID_MAP.set(config.pythPriceFeedId.toLowerCase(), config);
+  // Only register Pyth ID if it's a valid non-empty feed ID
+  if (config.pythPriceFeedId) {
+    COIN_BY_PYTH_ID_MAP.set(config.pythPriceFeedId.toLowerCase(), config);
+  }
 }
 
 export function getCoinConfigByType(coinType: string): CoinMetadataConfig | undefined {
@@ -255,5 +309,7 @@ export function getAllMonitoredCoinTypes(): string[] {
 }
 
 export function getAllPythFeedIds(): string[] {
-  return Object.values(COIN_CONFIGS).map((c) => c.pythPriceFeedId);
+  return Object.values(COIN_CONFIGS)
+    .map((c) => c.pythPriceFeedId)
+    .filter(Boolean);
 }

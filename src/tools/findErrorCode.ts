@@ -1,44 +1,15 @@
 import { rpcManager } from '../client/suiClient.js';
-import { Transaction } from '@mysten/sui/transactions';
-import { CONFIG } from '../config/index.js';
 
-async function findError() {
-  const pkgId = '0xde5c09ad171544aa3724dc67216668c80e754860f419136a68d78504eb2e2805';
-  const pkgNorm = await rpcManager.executeWithFallback('getNormalizedMoveModulesByPackage', (client) =>
-    client.getNormalizedMoveModulesByPackage({ package: pkgId })
-  );
-
-  const errorMod = pkgNorm['error'];
-  const fnNames = Object.keys(errorMod.exposedFunctions);
-
-  const tx = new Transaction();
-  for (const fn of fnNames) {
-    tx.moveCall({
-      target: `${pkgId}::error::${fn}`,
-      arguments: [],
-    });
-  }
-
-  const res = await rpcManager.executeWithFallback('devInspectTransactionBlock', (client) =>
-    client.devInspectTransactionBlock({
-      transactionBlock: tx,
-      sender: CONFIG.operatorAddress,
+async function main() {
+  const pkg = await rpcManager.executeWithFallback('getNormalizedMoveModulesByPackage', (client) =>
+    client.getNormalizedMoveModulesByPackage({
+      package: '0xae9c208cf58fd5ba36737c9ee5dcfa7f152d0fb5a5a99eebb7c881ebc2fe59e0'
     })
   );
-
-  if (res.results) {
-    for (let i = 0; i < fnNames.length; i++) {
-      const valBytes = res.results[i]?.returnValues?.[0]?.[0];
-      if (valBytes) {
-        // decode u64 little-endian
-        const buf = Buffer.from(valBytes);
-        const code = Number(buf.readBigUInt64LE(0));
-        if (code === 1025 || (code > 1020 && code < 1030)) {
-          console.log(`🎯 MATCH! ${fnNames[i]} -> ${code}`);
-        }
-      }
-    }
+  console.log('Modules in 0xae9c208c:', Object.keys(pkg));
+  if (pkg['router']) {
+    console.log('Router swap params:', JSON.stringify(pkg['router'].exposedFunctions['swap'], null, 2));
   }
 }
 
-findError().catch(console.error);
+main().catch(console.error);

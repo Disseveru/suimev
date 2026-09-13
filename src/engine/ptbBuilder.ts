@@ -5,8 +5,11 @@ import { getCoinConfigByType } from '../config/coins.js';
 import { naviProtocol } from '../protocols/navi/naviProtocol.js';
 import { NaviPtbBuilder } from '../protocols/navi/naviPtb.js';
 import { ScallopPtbBuilder } from '../protocols/scallop/scallopPtb.js';
+import { scallopProtocol } from '../protocols/scallop/scallopProtocol.js';
 import { CetusRouter } from '../protocols/dex/cetusRouter.js';
 import { DeepBookRouter } from '../protocols/dex/deepbookRouter.js';
+import * as navi from '@naviprotocol/lending';
+import { logger } from '../ui/logger.js';
 
 export interface BuiltLiquidationPTB {
   tx: Transaction;
@@ -58,7 +61,88 @@ export class ZeroCapitalPtbBuilder {
         throw new Error(`NAVI pool contract not found for ${opportunity.debtSymbol} or ${opportunity.collateralSymbol}`);
       }
 
-      // Flash loan debt asset
+      // Check if a direct Cetus CLMM pool exists for the (debt, collateral) pair
+      const directCetusPool = CetusRouter.findPoolId(debtCoinType, collateralCoinType);
+
+      if (directCetusPool) {
+        // High-liquidity Cetus CLMM Flash Swap pipeline
+        const flashSwap = CetusRouter.addFlashSwap(
+          tx,
+          directCetusPool.poolId,
+          directCetusPool.coinTypeA,
+          directCetusPool.coinTypeB,
+          debtCoinType,
+          debtAmountToRepay
+        );
+
+        // Liquidate NAVI borrower using the flash-swapped debt balance
+        const [collateralBalance, leftoverDebtBalance] = NaviPtbBuilder.addLiquidateBalances(
+          tx,
+          debtCoinType,
+          debtPool.id,
+          debtPool.poolContract,
+          flashSwap.loanBalance,
+          collateralCoinType,
+          colPool.id,
+          colPool.poolContract,
+          opportunity.obligation.ownerAddress
+        );
+
+        // Convert seized collateral balance to Coin
+        const collateralCoinFromBal = tx.moveCall({
+          target: '0x2::coin::from_balance',
+          arguments: [collateralBalance],
+          typeArguments: [collateralCoinType],
+        });
+
+        // Repay flash swap directly from the seized collateral coin (zero-capital!)
+        const [repayCoin] = tx.splitCoins(collateralCoinFromBal, [flashSwap.payAmount]);
+        const repayBalance = tx.moveCall({
+          target: '0x2::coin::into_balance',
+          arguments: [repayCoin],
+          typeArguments: [collateralCoinType],
+        });
+
+        CetusRouter.addRepayFlashSwap(
+          tx,
+          directCetusPool.poolId,
+          directCetusPool.coinTypeA,
+          directCetusPool.coinTypeB,
+          repayBalance,
+          flashSwap.flashReceipt,
+          flashSwap.a2b
+        );
+
+        // Convert leftover debt & empty balances to coins
+        const leftoverDebtCoinFromBal = tx.moveCall({
+          target: '0x2::coin::from_balance',
+          arguments: [leftoverDebtBalance],
+          typeArguments: [debtCoinType],
+        });
+
+        const emptyCoin = tx.moveCall({
+          target: '0x2::coin::from_balance',
+          arguments: [flashSwap.emptyBalance],
+          typeArguments: [collateralCoinType],
+        });
+
+        // Transfer remaining collateralCoinFromBal (net profit!) and leftover dust to operator
+        tx.transferObjects([collateralCoinFromBal, leftoverDebtCoinFromBal, emptyCoin], tx.pure.address(CONFIG.operatorAddress));
+
+        const debtCfg = getCoinConfigByType(debtCoinType);
+        const debtDecimals = debtCfg?.decimals ?? 6;
+        const debtPrice = opportunity.debtRepayUsd / (Number(debtAmountToRepay) / Math.pow(10, debtDecimals)) || 1.0;
+        const expectedProfitDebtUnits = BigInt(Math.floor((opportunity.expectedGrossProfitUsd / debtPrice) * Math.pow(10, debtDecimals)));
+
+        return {
+          tx,
+          opportunity,
+          estimatedFlashLoanFee: 0n,
+          expectedProfitDebtUnits,
+        };
+      }
+
+      // Fallback: Lending pool flash loan
       const naviLoan = NaviPtbBuilder.addFlashLoan(
         tx,
         debtCoinType,
@@ -84,6 +168,10 @@ export class ZeroCapitalPtbBuilder {
       leftoverDebtCoin = leftoverDebt;
     } else {
       // Scallop Protocol
+      if (opportunity.obligation.liquidateLocked) {
+        ScallopPtbBuilder.addForceUnstakeUnhealthy(tx, opportunity.obligation.obligationId);
+      }
+
       const scallopLoan = ScallopPtbBuilder.addFlashLoan(
         tx,
         debtCoinType,
@@ -182,5 +270,101 @@ export class ZeroCapitalPtbBuilder {
       estimatedFlashLoanFee,
       expectedProfitDebtUnits,
     };
+  }
+
+  // Obligation lock state cache — keyed by obligationId
+  // Value: { isLocked: boolean; expiresMs: number }
+  private static lockCache: Map<string, { isLocked: boolean; expiresMs: number }> = new Map();
+  private static LOCK_CACHE_TTL_MS = 10_000; // 10 seconds
+
+  /**
+   * High-Level Async Liquidation PTB Builder
+   * Automatically updates Pyth oracles and unlocks borrow-incentive positions if needed.
+   * Uses a 10s TTL cache for obligation lock state to avoid redundant RPC round-trips.
+   */
+  public static async buildLiquidationPTBAsync(
+    opportunity: LiquidationOpportunity
+  ): Promise<BuiltLiquidationPTB> {
+    if (opportunity.protocol === 'scallop') {
+      try {
+        const builder = await scallopProtocol.createScallopBuilder();
+        const scallopTx = builder.createTxBlock();
+
+        // 1. Update Pyth asset prices in xOracle for all assets in the target obligation
+        // Note: Scallop requires fresh prices for ALL collateral and debt assets in the obligation
+        // to evaluate health factor during force_unstake_unhealthy and liquidate without abort 1025.
+        const allTypes = [
+          ...opportunity.obligation.collaterals.filter(c => c.amount > 0n).map(c => c.coinType),
+          ...opportunity.obligation.debts.filter(d => d.amount > 0n).map(d => d.coinType),
+          opportunity.debtCoinType,
+          opportunity.collateralCoinType,
+        ];
+        const exactCoinNames = new Set<string>();
+        for (const coinType of allTypes) {
+          try {
+            const parsedName = (builder as any).utils?.parseCoinNameFromType?.(coinType);
+            if (parsedName && typeof parsedName === 'string') {
+              exactCoinNames.add(parsedName);
+            }
+          } catch {
+            // fallback
+          }
+        }
+        exactCoinNames.add(opportunity.debtSymbol.toLowerCase());
+        exactCoinNames.add(opportunity.collateralSymbol.toLowerCase());
+        const filteredCoins = Array.from(exactCoinNames).filter(c => c !== 'coin' && c !== 'unknown');
+        if (filteredCoins.length > 0) {
+          await scallopTx.updateAssetPricesQuick(filteredCoins, { isSponsoredTx: true });
+        }
+
+        // 2. Check obligation lock state — use TTL cache to skip extra RPC on retries
+        const oblId = opportunity.obligation.obligationId;
+        const cached = this.lockCache.get(oblId);
+        const now = Date.now();
+        let isLocked: boolean;
+
+        if (cached && now < cached.expiresMs) {
+          isLocked = cached.isLocked;
+        } else {
+          isLocked = await scallopProtocol.isObligationLocked(oblId);
+          this.lockCache.set(oblId, { isLocked, expiresMs: now + this.LOCK_CACHE_TTL_MS });
+        }
+
+        if (isLocked) {
+          ScallopPtbBuilder.addForceUnstakeUnhealthy(scallopTx.txBlock, oblId);
+          // Invalidate cache once we've added the unlock instruction — recheck next time
+          this.lockCache.delete(oblId);
+        }
+
+        return this.buildLiquidationPTB(opportunity, scallopTx.txBlock);
+      } catch (err: any) {
+        logger.error({ error: err?.message || err, stack: err?.stack }, 'Scallop SDK builder threw error in buildLiquidationPTBAsync');
+        // Fall back to direct assembly if SDK builder fails
+        const tx = new Transaction();
+        const oblId = opportunity.obligation.obligationId;
+        const isLocked = await scallopProtocol.isObligationLocked(oblId);
+        if (isLocked) {
+          ScallopPtbBuilder.addForceUnstakeUnhealthy(tx, oblId);
+        }
+        return this.buildLiquidationPTB(opportunity, tx);
+      }
+    }
+
+    if (opportunity.protocol === 'navi') {
+      const tx = new Transaction();
+      try {
+        const poolList = await (navi as any).getPools();
+        await (navi as any).updateOraclePriceBeforeUserOperationPTB(
+          tx,
+          opportunity.obligation.ownerAddress,
+          poolList
+        );
+      } catch (err) {
+        // Fall back if offline or in mock test environment
+      }
+      return this.buildLiquidationPTB(opportunity, tx);
+    }
+
+    return this.buildLiquidationPTB(opportunity);
   }
 }

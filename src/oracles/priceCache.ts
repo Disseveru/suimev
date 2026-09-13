@@ -40,6 +40,8 @@ export class PriceCache {
       USDY: 1.05,
       USDSUI: 1.00,
       AFSUI: 0.85,
+      CERT: 0.85,
+      VSUI: 0.85,
       SCA_SUI: 0.85,
     };
 
@@ -141,7 +143,7 @@ export class PriceCache {
       if (structName.includes('BTC')) return this.getPriceBySymbol('WBTC')?.price || 80000;
       if (structName.includes('ETH')) return this.getPriceBySymbol('WETH')?.price || 2500;
       if (structName.includes('USD')) return 1.0;
-      if (structName.includes('SUI')) return this.getPriceBySymbol('SUI')?.price || 0.83;
+      if (structName.includes('SUI')) return this.getPriceBySymbol('SUI')?.price || 0.80;
     }
 
     return 0;

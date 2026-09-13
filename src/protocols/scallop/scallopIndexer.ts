@@ -20,7 +20,10 @@ export class ScallopIndexer {
   private isRunning = false;
   private sweepInterval: NodeJS.Timeout | null = null;
 
-  constructor() {}
+  constructor() {
+    // Seed confirmed high-conviction obligations including the $160K whale
+    this.knownObligationIds.add('0x33fee6c01c25a4925ca053df2c99f0cb9d0c5c4985595b6e8eee5b66ebedb277');
+  }
 
   public onObligationUpdate(callback: ScallopObligationCallback): void {
     this.listeners.push(callback);
@@ -57,13 +60,27 @@ export class ScallopIndexer {
       );
 
       suiWsClient.subscribeEvent(
-        { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'collateral' } },
+        { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'deposit_collateral' } },
         (event) => {
           this.handleScallopEvent(event);
         }
       );
 
-      logger.info('Subscribed to Scallop Protocol WebSocket events');
+      suiWsClient.subscribeEvent(
+        { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'open_obligation' } },
+        (event) => {
+          this.handleScallopEvent(event);
+        }
+      );
+
+      suiWsClient.subscribeEvent(
+        { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'liquidate' } },
+        (event) => {
+          this.handleScallopEvent(event);
+        }
+      );
+
+      logger.info('Subscribed to Scallop Protocol WebSocket events (borrow, deposit_collateral, open_obligation, liquidate)');
     } catch (err) {
       logger.warn({ error: err }, 'Could not subscribe to Scallop WebSocket events');
     }
@@ -87,25 +104,101 @@ export class ScallopIndexer {
     this.knownObligationIds.add(id);
   }
 
-  public async discoverObligationsFromHistory(): Promise<void> {
+  public async discoverObligationsFromHistory(maxPages: number = 20): Promise<void> {
     try {
-      logger.info('Querying recent Scallop events to discover active obligations...');
-      const events = await rpcManager.executeWithFallback('scallopQueryEvents', (client) =>
-        client.queryEvents({
-          query: { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'borrow' } },
-          limit: 50,
-        })
-      );
-
-      for (const ev of events.data) {
-        const json = ev.parsedJson as Record<string, unknown> | undefined;
-        const obligationId = (json?.obligation || json?.obligation_id) as string | undefined;
-        if (obligationId && typeof obligationId === 'string' && obligationId.startsWith('0x')) {
-          this.addObligation(obligationId);
+      logger.info('Querying historical Scallop events with cursor pagination across open_obligation, borrow, and deposit_collateral...');
+      
+      // 1. Paginate open_obligation events (every created obligation)
+      let openCursor: any = null;
+      let openPages = 0;
+      while (openPages < maxPages) {
+        try {
+          const res = await rpcManager.executeWithFallback('scallopOpenOblEvents', (client) =>
+            client.queryEvents({
+              query: { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'open_obligation' } },
+              cursor: openCursor,
+              limit: 100,
+            })
+          );
+          openPages++;
+          if (res.data) {
+            for (const ev of res.data) {
+              const json = ev.parsedJson as Record<string, unknown> | undefined;
+              const oblId = (json?.obligation || json?.obligation_id) as string | undefined;
+              if (oblId && typeof oblId === 'string' && oblId.startsWith('0x')) {
+                this.addObligation(oblId);
+              }
+            }
+          }
+          if (!res.hasNextPage || !res.nextCursor) break;
+          openCursor = res.nextCursor;
+        } catch (err) {
+          logger.debug({ error: err }, 'Error during open_obligation event pagination');
+          break;
         }
       }
 
-      logger.info(`Discovered ${this.knownObligationIds.size} active Scallop obligations`);
+      // 2. Paginate borrow events (active borrowers)
+      let borrowCursor: any = null;
+      let borrowPages = 0;
+      while (borrowPages < maxPages) {
+        try {
+          const res = await rpcManager.executeWithFallback('scallopBorrowEvents', (client) =>
+            client.queryEvents({
+              query: { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'borrow' } },
+              cursor: borrowCursor,
+              limit: 100,
+            })
+          );
+          borrowPages++;
+          if (res.data) {
+            for (const ev of res.data) {
+              const json = ev.parsedJson as Record<string, unknown> | undefined;
+              const oblId = (json?.obligation || json?.obligation_id) as string | undefined;
+              if (oblId && typeof oblId === 'string' && oblId.startsWith('0x')) {
+                this.addObligation(oblId);
+              }
+            }
+          }
+          if (!res.hasNextPage || !res.nextCursor) break;
+          borrowCursor = res.nextCursor;
+        } catch (err) {
+          logger.debug({ error: err }, 'Error during Scallop borrow event pagination');
+          break;
+        }
+      }
+
+      // 3. Paginate deposit_collateral events
+      let colCursor: any = null;
+      let colPages = 0;
+      while (colPages < maxPages) {
+        try {
+          const res = await rpcManager.executeWithFallback('scallopColEvents', (client) =>
+            client.queryEvents({
+              query: { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'deposit_collateral' } },
+              cursor: colCursor,
+              limit: 100,
+            })
+          );
+          colPages++;
+          if (res.data) {
+            for (const ev of res.data) {
+              const json = ev.parsedJson as Record<string, unknown> | undefined;
+              const oblId = (json?.obligation || json?.obligation_id) as string | undefined;
+              if (oblId && typeof oblId === 'string' && oblId.startsWith('0x')) {
+                this.addObligation(oblId);
+              }
+            }
+          }
+          if (!res.hasNextPage || !res.nextCursor) break;
+          colCursor = res.nextCursor;
+        } catch (err) {
+          logger.debug({ error: err }, 'Error during Scallop deposit_collateral event pagination');
+          break;
+        }
+      }
+
+      logger.info(`Discovered ${this.knownObligationIds.size} active Scallop obligations across ${openPages + borrowPages + colPages} historical pages`);
       await this.refreshAllObligations();
     } catch (err) {
       logger.warn({ error: err }, 'Could not fetch historical Scallop events');
@@ -113,8 +206,11 @@ export class ScallopIndexer {
   }
 
   public async refreshAllObligations(): Promise<void> {
-    for (const id of this.knownObligationIds) {
-      await this.refreshObligationState(id);
+    const ids = Array.from(this.knownObligationIds);
+    const BATCH_SIZE = 25;
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batch = ids.slice(i, i + BATCH_SIZE);
+      await Promise.allSettled(batch.map((id) => this.refreshObligationState(id)));
     }
   }
 
@@ -142,9 +238,11 @@ export class ScallopIndexer {
               const inferredLt = cfg?.liquidationThreshold ?? (
                 lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('sui') || lowerType.includes('usd') ? 0.90 : 0.80
               );
+              const parsedName = (query as any).utils?.parseCoinNameFromType?.(coinType);
+              const symbol = cfg?.symbol ?? (parsedName ? parsedName.toUpperCase() : coinType.split('::')[2]) ?? 'UNKNOWN';
               collaterals.push({
                 coinType,
-                symbol: cfg?.symbol ?? coinType.split('::')[2] ?? 'UNKNOWN',
+                symbol,
                 amount: BigInt(col.amount ?? '0'),
                 decimals: inferredDecimals,
                 valueUsd: 0,
@@ -163,9 +261,11 @@ export class ScallopIndexer {
                 lowerType.includes('eth') ? 8 :
                 lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('usd') || lowerType.includes('deep') ? 6 : 9
               );
+              const parsedName = (query as any).utils?.parseCoinNameFromType?.(coinType);
+              const symbol = cfg?.symbol ?? (parsedName ? parsedName.toUpperCase() : coinType.split('::')[2]) ?? 'UNKNOWN';
               debts.push({
                 coinType,
-                symbol: cfg?.symbol ?? coinType.split('::')[2] ?? 'UNKNOWN',
+                symbol,
                 amount: BigInt(d.amount ?? '0'),
                 decimals: inferredDecimals,
                 valueUsd: 0,

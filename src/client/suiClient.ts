@@ -105,6 +105,48 @@ export class SuiClientManager {
   }
 
   /**
+   * Broadcast a signed transaction to ALL healthy endpoints in parallel.
+   * Returns the first successful result (Promise.any). Falls back to sequential
+   * executeWithFallback if every parallel attempt rejects.
+   */
+  public async executeBroadcastRace<T>(
+    operationName: string,
+    action: (client: SuiJsonRpcClient) => Promise<T>
+  ): Promise<T> {
+    const healthyEndpoints = this.endpoints.filter((ep) => ep.isHealthy);
+    if (healthyEndpoints.length === 0) {
+      // All marked unhealthy — attempt sequential recovery path
+      return this.executeWithFallback(operationName, action);
+    }
+
+    const attempts = healthyEndpoints.map(async (endpoint) => {
+      const startMs = Date.now();
+      try {
+        const result = await action(endpoint.client);
+        endpoint.lastLatencyMs = Date.now() - startMs;
+        endpoint.failures = 0;
+        endpoint.isHealthy = true;
+        return result;
+      } catch (err) {
+        endpoint.failures++;
+        endpoint.lastLatencyMs = Date.now() - startMs;
+        const isRateLimit = String(err).includes('429') || String(err).includes('Too Many Requests');
+        if (endpoint.failures >= 3 || isRateLimit) {
+          endpoint.isHealthy = false;
+        }
+        throw err;
+      }
+    });
+
+    try {
+      return await Promise.any(attempts);
+    } catch {
+      // All rejected — fall back to sequential with failover
+      return this.executeWithFallback(operationName, action);
+    }
+  }
+
+  /**
    * Periodic health checker to recover endpoints and update latency
    */
   public async checkHealth(): Promise<void> {
