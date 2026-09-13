@@ -37,7 +37,7 @@ async function test() {
     repayAmount: opp.debtAmountToRepay.toString(),
     collateralSymbol: opp.collateralSymbol,
     seizeAmount: opp.collateralToReceive.toString(),
-    estimatedProfitUsd: opp.estimatedProfitUsd,
+    estimatedProfitUsd: opp.expectedGrossProfitUsd,
   });
 
   const builder = await sdk.createScallopBuilder();
@@ -77,8 +77,8 @@ async function test() {
   console.log('Net Profit USD:', sim.netProfitUsd);
   console.log('Gas Used SUI:', sim.gasUsedSui);
   console.log('Error Message:', sim.errorMessage);
-  if (sim.rawSimulationResult) {
-    console.log('Effects status:', JSON.stringify(sim.rawSimulationResult.effects?.status, null, 2));
+  if ((sim as any).rawSimulationResult) {
+    console.log('Effects status:', JSON.stringify((sim as any).rawSimulationResult.effects?.status, null, 2));
   }
 }
 

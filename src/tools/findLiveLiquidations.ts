@@ -40,7 +40,7 @@ async function main() {
     console.log(`Health Factor: ${target.healthFactor.toFixed(4)}`);
     console.log(`Total Debt: $${target.totalDebtUsd.toFixed(2)}, Total Collateral: $${target.totalCollateralUsd.toFixed(2)}`);
     console.log(`Repay: ${opp.debtAmountToRepay} ${opp.debtSymbol}, Seize: ${opp.collateralToReceive} ${opp.collateralSymbol}`);
-    console.log(`Estimated Gross Profit: $${opp.estimatedProfitUsd?.toFixed(2) ?? 'N/A'}`);
+    console.log(`Estimated Gross Profit: $${opp.expectedGrossProfitUsd?.toFixed(2) ?? 'N/A'}`);
 
     try {
       const ptb = await ZeroCapitalPtbBuilder.buildLiquidationPTBAsync(opp);

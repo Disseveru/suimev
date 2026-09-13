@@ -52,6 +52,12 @@ export class NaviPtbBuilder {
     collateralPoolContract: string,
     borrowerAddress: string
   ): [TransactionObjectArgument, TransactionObjectArgument] {
+    const debtBalance = tx.moveCall({
+      target: '0x2::coin::into_balance',
+      arguments: [debtCoinInput],
+      typeArguments: [debtCoinType],
+    });
+
     const [collateralBalance, leftoverDebtBalance] = tx.moveCall({
       target: `${NAVI_CONFIG.packageId}::incentive_v3::liquidation_v2`,
       arguments: [
@@ -60,7 +66,7 @@ export class NaviPtbBuilder {
         tx.object(NAVI_CONFIG.storage),
         tx.pure.u8(debtAssetId),
         tx.object(debtPoolContract),
-        debtCoinInput,
+        debtBalance,
         tx.pure.u8(collateralAssetId),
         tx.object(collateralPoolContract),
         tx.pure.address(borrowerAddress),
