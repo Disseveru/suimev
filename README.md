@@ -104,7 +104,7 @@ In traditional EVM blockchains, flash liquidations require deploying custom smar
 
 ### 1. Prerequisites
 
-* **Node.js 20+** (Tested on Node v20 - v26)
+* **Node.js 22.12–22.x, 24.x, or 26+** (matches Vitest 5 support)
 * **npm** or **pnpm**
 
 ### 2. Installation
