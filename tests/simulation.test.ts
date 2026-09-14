@@ -1,10 +1,14 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { PreFlightSimulator } from '../src/engine/simulator.js';
 import { rpcManager } from '../src/client/suiClient.js';
 import { Transaction } from '@mysten/sui/transactions';
 import { LiquidationOpportunity, ObligationState } from '../src/config/types.js';
 
 describe('PreFlightSimulator', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   const mockObligation: ObligationState = {
     protocol: 'navi',
     obligationId: '0x123',
@@ -70,6 +74,65 @@ describe('PreFlightSimulator', () => {
     expect(result.isProfitable).toBe(false);
     expect(result.errorMessage).toContain('MoveAbort');
   });
+
+  it('should keep one-shot RPC mocks isolated across consecutive simulations', async () => {
+    const executeWithFallback = vi
+      .spyOn(rpcManager, 'executeWithFallback')
+      .mockResolvedValueOnce({
+        effects: {
+          status: { status: 'failure', error: 'First simulation reverted' },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        effects: {
+          status: { status: 'success' },
+          gasUsed: {
+            computationCost: '0',
+            storageCost: '0',
+            storageRebate: '0',
+          },
+        },
+      } as any);
+
+    const firstResult = await PreFlightSimulator.simulate(new Transaction(), mockOpportunity);
+    const secondResult = await PreFlightSimulator.simulate(new Transaction(), mockOpportunity);
+
+    expect(executeWithFallback).toHaveBeenCalledTimes(2);
+    expect(firstResult).toMatchObject({
+      success: false,
+      isProfitable: false,
+      errorMessage: 'First simulation reverted',
+    });
+    expect(secondResult).toMatchObject({
+      success: true,
+      isProfitable: true,
+    });
+    expect(secondResult).not.toHaveProperty('errorMessage');
+  });
+
+  it.each([
+    { rejection: new Error('RPC request timed out'), expectedMessage: 'RPC request timed out' },
+    { rejection: 'transport disconnected', expectedMessage: 'transport disconnected' },
+  ])(
+    'should normalize rejected RPC values into failed simulation results ($expectedMessage)',
+    async ({ rejection, expectedMessage }) => {
+      vi.spyOn(rpcManager, 'executeWithFallback').mockRejectedValueOnce(rejection);
+
+      const result = await PreFlightSimulator.simulate(new Transaction(), mockOpportunity);
+
+      expect(result).toMatchObject({
+        success: false,
+        opportunity: mockOpportunity,
+        gasUsedSui: 0,
+        gasCostUsd: 0,
+        netProfitUsd: 0,
+        netProfitSui: 0,
+        isProfitable: false,
+        errorMessage: expectedMessage,
+        simulationType: 'devInspect',
+      });
+    }
+  );
 
   it('should reject liquidation when gas cost outweighs gross profit', async () => {
     // High gas fee simulating network congestion: 3 SUI gas fee (~$7.50 USD) > $5.00 profit
