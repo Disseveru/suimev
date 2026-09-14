@@ -1,10 +1,21 @@
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeAll, afterAll, describe, it, expect, vi } from 'vitest';
 import { PreFlightSimulator } from '../src/engine/simulator.js';
 import { rpcManager } from '../src/client/suiClient.js';
 import { Transaction } from '@mysten/sui/transactions';
 import { LiquidationOpportunity, ObligationState } from '../src/config/types.js';
+import { CONFIG } from '../src/config/index.js';
 
 describe('PreFlightSimulator', () => {
+  const originalMinProfit = CONFIG.minProfitUsd;
+
+  beforeAll(() => {
+    (CONFIG as any).minProfitUsd = 2.0;
+  });
+
+  afterAll(() => {
+    (CONFIG as any).minProfitUsd = originalMinProfit;
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
