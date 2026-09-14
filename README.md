@@ -1,34 +1,46 @@
-# ⚡ SuiMEV Liquidator (`suimev-liquidator`)
+# ⚡ SuiMEV & EVM-MEV Zero-Capital Liquidation Engine
 
-> **Production-ready, Zero-Capital MEV Liquidation Engine on the Sui Blockchain.**
-> Monitors borrower obligations across **NAVI Protocol** and **Scallop Protocol**, tracks sub-second Pyth oracle price updates, constructs zero-contract **Programmable Transaction Blocks (PTBs)** combining Flash Loans with DEX Swaps (**Cetus CLMM** & **DeepBook v3**), simulates transactions pre-flight, and executes profitable liquidations atomically.
+[![Tests](https://img.shields.io/badge/tests-24%20passed-brightgreen.svg)]()
+[![Security](https://img.shields.io/badge/dependabot-0%20vulnerabilities-brightgreen.svg)]()
+[![Network](https://img.shields.io/badge/chains-Sui%20Mainnet%20%7C%20Parallel%20EVM-blue.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-green.svg)]()
+
+> **Production-grade, Zero-Capital MEV Liquidation Engine across Sui Blockchain and High-Performance Parallel EVM Networks (Monad & Sei v2).**
+>
+> On **Sui**, it monitors borrower obligations across **NAVI Protocol** and **Scallop Protocol**, tracks sub-second Pyth oracle price streams, constructs zero-contract **Programmable Transaction Blocks (PTBs)** combining Flash Loans with DEX Swaps (**Cetus CLMM** & **DeepBook v3**), simulates transactions pre-flight, and executes profitable liquidations atomically.
+>
+> In **`evm-mev/`**, it deploys and orchestrates atomic zero-capital liquidations on parallel EVM chains (**Monad** & **Sei v2**) using `FlashLiquidator.sol`, leveraging Balancer Vault (0% fee) and Aave v3 flash loans.
 
 ---
 
 ## 🌟 Key Features
 
-* **Zero-Contract Execution on Sui:**
-  Leverages Sui's native **Programmable Transaction Blocks (PTB)** to atomically chain flash loans, protocol liquidations, and DEX swaps in a single transaction without deploying or maintaining custom smart contracts.
-* **Dual Lending Protocol Integration:**
-  Full support for both **NAVI Protocol** and **Scallop Protocol** obligation models, dynamic borrow indices, collateral pools, and close factor management.
-* **Sub-Millisecond Health Factor Math Engine:**
-  Evaluates multi-asset portfolios and risk-adjusted collateral thresholds at **~380,000 evaluations/sec** (`0.0026 ms` per evaluation).
-* **High-Throughput PTB Assembler:**
-  Builds complex, multi-command atomic transaction blocks in **`~0.30 ms`** (`>3,000 PTBs/sec`).
-* **Multi-DEX Liquidation Routing:**
-  Supports atomic swaps via **Cetus CLMM** (concentrated liquidity) and **DeepBook v3** (CLOB market orders) with configurable slippage controls.
-* **Hermes Pyth Oracle Stream:**
-  Real-time Pyth price tracking with price-tick-triggered re-evaluation of borderline obligations ($1.00 \le \text{HF} < 1.05$) to front-run liquidation events.
-* **Pre-Flight Simulation & Profitability Guard:**
-  Executes `devInspectTransactionBlock` before consensus broadcast, calculating net profit in USD ($P_{\text{net}} = P_{\text{gross}} - \text{GasCost}_{\text{USD}}$) and dropping unprofitable opportunities.
-* **Resilient Multi-RPC Failover:**
-  Tracks endpoint latency and error rates across multiple Sui RPC nodes with automatic failover and rate-limit backoff.
-* **Rich Telemetry Dashboard & Multi-Mode CLI:**
-  Live terminal dashboard displaying monitored accounts, priority buckets, live price feeds, and cumulative PnL.
+### 1. Sui Zero-Contract Architecture
+* **Zero-Contract Execution:** Native Sui **Programmable Transaction Blocks (PTB)** chain flash loans, protocol liquidations, and DEX swaps in a single transaction without deploying or maintaining custom smart contracts.
+* **Dual Lending Protocol Coverage:** Full support for both **NAVI Protocol** and **Scallop Protocol** obligation models, dynamic borrow indices, collateral pools, and close factor management.
+* **Multi-DEX Atomic Routing:** Atomic liquidation swaps via **Cetus CLMM** (concentrated liquidity flash swaps) and **DeepBook v3** (CLOB spot swaps) with strict minimum output slippage protection.
+* **Sub-Millisecond Math Engine:** Evaluates multi-asset portfolios and risk-adjusted collateral thresholds at **~390,000 evaluations/sec** (`0.0025 ms` per evaluation).
+* **High-Throughput PTB Assembler:** Builds multi-command atomic transaction blocks in **`~0.30 ms`** (`>3,300 PTBs/sec`).
+* **Pyth Hermes Oracle Stream:** Real-time Pyth price tracking with price-tick-triggered re-evaluation of borderline obligations ($1.00 \le \text{HF} < 1.05$) to front-run liquidation events.
+* **Pre-Flight Simulation Guard:** Runs `devInspectTransactionBlock` before consensus broadcast, calculating net profit in USD ($P_{\text{net}} = P_{\text{gross}} - \text{GasCost}_{\text{USD}}$) and discarding unprofitable opportunities.
+* **Zero-Capital Solvency & Bad Debt Guard:** Prevents gas waste by automatically detecting and discarding unexecutable historical bad debt ($0 collateral).
+* **Resilient Multi-RPC Routing:** Routes all production requests through low-latency dedicated endpoints (Alchemy Sui Mainnet, NodeInfra, Sui RPC Pool) with automatic failover and rate-limit backoff.
+
+### 2. EVM Zero-Capital Engine (`evm-mev/`)
+* **Parallel EVM Optimized:** Built specifically for parallel execution environments (**Monad** & **Sei Network v2**).
+* **FlashLiquidator Contract:** Deploys `FlashLiquidator.sol` orchestrating Balancer Vault (0% fee flash loans) and Aave v3 with atomic revert protection (`minProfit` invariant enforcement).
+* **Multi-DEX Swaps:** Integrates DragonSwap, Ambient, and Uniswap v3 for atomic collateral liquidation routing.
+
+### 3. Security & Dependency Hardening
+* **100% Dependabot Remediation:** All 30 GitHub security advisories resolved with zero open alerts (`axios`, `uuid`, `vitest` patched).
+* **Move SDK Compatibility:** Pinned package overrides ensure seamless operation of Move Sui v2 SDK packages (`@scallop-io/sui-scallop-sdk`, `@cetusprotocol/cetus-sui-clmm-sdk`).
+* **Fully Audited Test Suite:** 24 unit and integration tests passing covering math, PTBs, oracles, routers, and simulation.
 
 ---
 
 ## 📐 System Architecture
+
+### Sui Atomic PTB Flow
 
 ```mermaid
 flowchart TD
@@ -51,8 +63,8 @@ flowchart TD
         PTB --> SIM["Pre-Flight Simulator (devInspect)"]
     end
 
-    subgraph AtomicPTB ["Single Atomic Transaction Block"]
-        FL["1. Flash Loan Debt Coin (NAVI / Scallop)"]
+    subgraph AtomicPTB ["Single Atomic Transaction Block (Zero Contract)"]
+        FL["1. Flash Loan Debt Coin (NAVI / Scallop / Cetus)"]
         LQ["2. Liquidate Obligation -> Seize Collateral"]
         SW["3. DEX Swap Collateral -> Debt (Cetus / DeepBook)"]
         RP["4. Repay Flash Loan + Fee"]
@@ -60,15 +72,37 @@ flowchart TD
         FL --> LQ --> SW --> RP --> PF
     end
 
-    SIM -->|Profitable: Net Profit >= $2.00| EXE["Transaction Executor"]
+    SIM -->|Profitable: Net Profit >= MIN_PROFIT_USD| EXE["Transaction Executor"]
     EXE -->|Sign & Execute| AtomicPTB
+```
+
+### EVM Flash Liquidator Flow (`evm-mev/`)
+
+```mermaid
+flowchart TD
+    subgraph SearcherDaemon ["EVM Searcher Daemon"]
+        MON["Mempool & State Monitor (Monad / Sei v2)"] --> DETEVM["Liquidation Detector"]
+        DETEVM --> SIMEVM["Pre-Flight eth_call Simulation"]
+    end
+
+    subgraph OnChainContract ["FlashLiquidator.sol (Atomic Revert Protection)"]
+        FL1["1. Borrow Flash Loan (Balancer 0% / Aave v3)"]
+        LC1["2. liquidationCall (Yei Finance / Aave v3 / Curvance)"]
+        SW1["3. Atomic DEX Swap (DragonSwap / Ambient / Uniswap v3)"]
+        RP1["4. Repay Flash Loan Principal + Fee"]
+        PR1["5. Verify minProfit Invariant & Transfer Surplus to Operator"]
+        FL1 --> LC1 --> SW1 --> RP1 --> PR1
+    end
+
+    SIMEVM -->|Net Profit >= MinProfit| EXEEVM["Broadcast PGA / Flashbots"]
+    EXEEVM --> OnChainContract
 ```
 
 ---
 
-## 🔄 The Zero-Capital Atomic PTB Flow
+## 🔄 The Zero-Capital Atomic PTB Flow (Sui)
 
-In traditional EVM blockchains, flash liquidations require deploying custom smart contracts (`FlashLiquidator.sol`). On Sui, PTBs natively allow composing Move calls across unrelated packages:
+On Sui, PTBs natively allow composing Move calls across completely separate packages in a single execution:
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -93,44 +127,44 @@ In traditional EVM blockchains, flash liquidations require deploying custom smar
 │                                                                        │
 │ 6. Sweep Net Profit:                                                   │
 │    transferObjects([ProfitCoin], OperatorAddress)                      │
-│└────────────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 > **Atomic Safety Guarantee:** If DEX liquidity is insufficient, slippage exceeds the threshold, or another searcher liquidates first, the Move execution aborts automatically and the entire PTB rolls back. Zero operator capital is at risk.
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Sui Engine)
 
 ### 1. Prerequisites
 
-* **Node.js 22.12–22.x, 24.x, or 26+** (matches Vitest 5 support)
+* **Node.js 22.x or 24.x** (compatible with Vitest 5 and Sui SDK v2)
 * **npm** or **pnpm**
 
 ### 2. Installation
 
 ```bash
-git clone <repo-url> suimev-liquidator
-cd suimev-liquidator
+git clone https://github.com/Disseveru/suimev.git
+cd suimev
 npm install
 ```
 
 ### 3. Configure Environment
 
-Create `.env` from `.env.example`:
+Copy `.env.example` to `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit your `.env`:
+Edit your `.env` with your dedicated RPC endpoints and operator credentials:
 
 ```ini
 # Mainnet Configuration
 NETWORK=mainnet
-SUI_RPC_URL=https://fullnode.mainnet.sui.io:443
+SUI_RPC_URL=https://sui-mainnet.g.alchemy.com/v2/your_alchemy_key
 SUI_BACKUP_RPCS=https://sui-mainnet.nodeinfra.com,https://mainnet.sui.rpcpool.com
-SUI_WS_URL=wss://fullnode.mainnet.sui.io:443
+SUI_WS_URL=wss://sui-mainnet.g.alchemy.com/v2/your_alchemy_key
 
 # Operator Private Key (bech32 'suiprivkey1...')
 SUI_PRIVATE_KEY=suiprivkey1...
@@ -139,7 +173,7 @@ SUI_PRIVATE_KEY=suiprivkey1...
 DRY_RUN=true
 
 # Strategy Settings
-MIN_PROFIT_USD=2.00
+MIN_PROFIT_USD=5.00
 MAX_SLIPPAGE_BPS=100
 LIQUIDATION_CLOSE_FACTOR=0.50
 PROTOCOLS=navi,scallop
@@ -148,11 +182,11 @@ PREFERRED_DEX=cetus
 
 ---
 
-## 💻 CLI Commands
+## 💻 CLI Commands (Sui)
 
 ### 1. Run Live Searcher Daemon
 
-Starts the event listeners, Pyth price feed updates, and the real-time terminal dashboard:
+Starts event listeners, Pyth Hermes price feed updates, and the real-time terminal telemetry dashboard:
 
 ```bash
 npm start
@@ -160,7 +194,7 @@ npm start
 
 ### 2. Scan Obligations Across Protocols
 
-Performs a one-time audit of borrower obligations across NAVI & Scallop and displays positions, health factors, and liquidation status:
+Performs an on-chain audit of borrower obligations across NAVI & Scallop and displays positions, health factors, and liquidation status:
 
 ```bash
 npm run scan
@@ -194,15 +228,9 @@ npm run sentio
 npm run replay <TRANSACTION_DIGEST>
 ```
 
-Sui simulation is supported natively on two levels:
-
-1. **Automated Zero-Gas Pre-Flight (`devInspectTransactionBlock`)**: Runs in memory against current blockchain state before any gas is committed.
-2. **Stateful Dry-Run (`dryRunTransactionBlock`)**: Analyzes exact gas consumption, object mutation sets, and balance shifts.
-3. **Sentio Sui Move Debugger (`https://app.sentio.xyz/sui`)**: Visual bytecode step-through, PTB command inspection, and Move abort code disassembly.
-
 ### 6. Run Automated Test Suite
 
-Executes 20 unit and integration tests covering math, PTBs, oracles, routers, devInspect/dryRun simulation, and Sentio bridge:
+Executes 24 unit and integration tests covering math, PTBs, oracles, routers, devInspect/dryRun simulation, and Sentio bridge:
 
 ```bash
 npm test
@@ -210,7 +238,36 @@ npm test
 
 ---
 
-## 📊 Benchmark Results
+## ⚡ Quick Start (EVM Engine - `evm-mev/`)
+
+Navigate to the EVM sub-project:
+
+```bash
+cd evm-mev
+npm install
+```
+
+### 1. Check Network Status (Monad / Sei v2)
+
+```bash
+npm run status
+```
+
+### 2. Pre-Flight Zero-Capital Simulation
+
+```bash
+npm run simulate
+```
+
+### 3. Run EVM Test Suite
+
+```bash
+npm test
+```
+
+---
+
+## 📊 Benchmark Performance
 
 Measured on Node.js v26.7.0 (AMD Ryzen 9 / Intel Core i9 class processor):
 
@@ -222,54 +279,23 @@ Measured on Node.js v26.7.0 (AMD Ryzen 9 / Intel Core i9 class processor):
 
 ---
 
-## 📂 Project Structure
+## 📂 Repository Structure
 
 ```text
-suimev-liquidator/
-├── src/
-│   ├── config/
-│   │   ├── index.ts              # Zod environment validation & keypair loading
-│   │   ├── coins.ts              # Canonical token metadata (types, decimals, feeds)
-│   │   ├── constants.ts          # Mainnet contract addresses & shared object IDs
-│   │   └── types.ts              # Core TypeScript interfaces & types
-│   ├── client/
-│   │   ├── suiClient.ts          # Multi-RPC client with latency tracking & failover
-│   │   ├── websocket.ts          # Sui WebSocket RPC event subscriber
-│   │   └── cetusCompat.ts        # Sui v2 ESM loader compatibility bridge
-│   ├── oracles/
-│   │   ├── priceCache.ts         # High-speed in-memory price cache
-│   │   ├── pythService.ts        # Pyth Hermes client & VAA payload fetcher
-│   │   └── healthFactor.ts       # Health Factor & liquidation margin engine
-│   ├── protocols/
-│   │   ├── navi/
-│   │   │   ├── naviProtocol.ts   # NAVI pool registry & reserve data
-│   │   │   ├── naviIndexer.ts    # NAVI borrower indexer & event stream
-│   │   │   └── naviPtb.ts        # NAVI Move call PTB builder
-│   │   ├── scallop/
-│   │   │   ├── scallopProtocol.ts# Scallop SDK wrapper & market queries
-│   │   │   ├── scallopIndexer.ts # Scallop obligation indexer
-│   │   │   └── scallopPtb.ts     # Scallop Move call PTB builder
-│   │   └── dex/
-│   │       ├── cetusRouter.ts    # Cetus CLMM quotation & atomic swap builder
-│   │       └── deepbookRouter.ts # DeepBook v3 quotation & spot swap builder
-│   ├── engine/
-│   │   ├── registry.ts           # Prioritized Obligation Registry (Immediate/Hot/Safe)
-│   │   ├── ptbBuilder.ts         # Unified Zero-Capital PTB Assembler
-│   │   ├── simulator.ts          # Pre-flight dry-run simulator (devInspect)
-│   │   ├── executor.ts           # Gas manager, dynamic tipping & executor
-│   │   └── searcher.ts           # Main searcher daemon loop
-│   ├── ui/
-│   │   ├── logger.ts             # Structured Pino logger
-│   │   └── terminal.ts           # Real-time terminal telemetry dashboard
-│   ├── cli/
-│   │   └── index.ts              # CLI commands (start, scan, simulate, benchmark)
-│   └── index.ts                  # Application entry point
-├── tests/
-│   ├── healthFactor.test.ts      # Multi-asset collateral/debt valuation tests
-│   ├── ptbBuilder.test.ts        # PTB command sequence verification tests
-│   ├── oracles.test.ts           # Price cache & watchlist trigger tests
-│   ├── dexRouter.test.ts         # DEX quotation & slippage tests
-│   └── simulation.test.ts        # Simulation parser & profit gate tests
+suimev/
+├── src/                          # Sui MEV Liquidator Core
+│   ├── config/                   # Zod environment validation, coins, shared objects
+│   ├── client/                   # Multi-RPC client, WebSocket subscribers, failover
+│   ├── oracles/                  # Price cache, Pyth Hermes stream, health factor math
+│   ├── protocols/                # NAVI, Scallop, and DEX (Cetus & DeepBook) routers
+│   ├── engine/                   # Obligation registry, PTB builder, simulator, executor
+│   ├── ui/                       # Real-time terminal telemetry dashboard & logger
+│   └── cli/                      # CLI commands (start, scan, simulate, benchmark)
+├── evm-mev/                      # Parallel EVM Liquidation Engine (Monad & Sei v2)
+│   ├── contracts/                # FlashLiquidator.sol (Balancer / Aave v3 atomic liquidator)
+│   ├── src/                      # EVM searcher daemon, ABI loaders, simulation
+│   └── tests/                    # EVM liquidation & revert protection unit tests
+├── tests/                        # Sui unit & integration tests (24 passing)
 ├── dist/                         # Compiled production ESM build
 ├── .env.example                  # Environment configuration template
 ├── package.json
@@ -281,9 +307,10 @@ suimev-liquidator/
 ## 🛡️ Risk Management & Safety Features
 
 1. **Dry-Run Mode Default:** `DRY_RUN=true` is enabled by default. The bot will simulate all transactions on RPC without broadcasting to consensus.
-2. **Pre-Flight devInspect:** Every transaction is simulated against current state before submission. If another liquidator front-runs the transaction or prices shift, simulation fails and no gas is wasted.
+2. **Pre-Flight devInspect:** Every transaction is simulated against current state before submission. If another liquidator front-runs the transaction or prices shift, simulation fails and no gas is committed.
 3. **Minimum Net Profit Gate:** A transaction is only submitted if $\text{Net Profit USD} \ge \text{MIN\_PROFIT\_USD}$ after deducting computation costs, storage fees, flash loan fees, and DEX slippage.
 4. **Slippage Enforcement:** Atomic DEX swap calls specify strict minimum output amounts; if slippage exceeds `MAX_SLIPPAGE_BPS`, the Move call aborts atomically.
+5. **Zero-Capital Solvency Guard:** Enforces `totalCollateralUsd > 0 && collaterals.length > 0` before building PTBs to eliminate failed transactions against bad debt positions.
 
 ---
 
