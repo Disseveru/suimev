@@ -148,5 +148,65 @@ describe('ZeroCapitalPtbBuilder', () => {
     expect(built).toBeDefined();
     const txData = built.tx.getData();
     expect(txData.commands.length).toBeGreaterThanOrEqual(4);
+    expect(txData.sender).toBeDefined();
+  });
+
+  it('should automatically prepend force_unstake_unhealthy when Scallop obligation is liquidateLocked', () => {
+    const mockLockedObligation: ObligationState = {
+      protocol: 'scallop',
+      obligationId: '0x0000000000000000000000000000000000000000000000000000000000000999',
+      ownerAddress: '0x0000000000000000000000000000000000000000000000000000000000000999',
+      collaterals: [
+        {
+          coinType: '0x2::sui::SUI',
+          symbol: 'SUI',
+          amount: 500_000_000_000n,
+          decimals: 9,
+          valueUsd: 1000,
+          liquidationThreshold: 0.80,
+        },
+      ],
+      debts: [
+        {
+          coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+          symbol: 'USDC',
+          amount: 850_000_000n,
+          decimals: 6,
+          valueUsd: 850,
+        },
+      ],
+      totalCollateralUsd: 1000,
+      totalDebtUsd: 850,
+      liquidationThresholdCollateralUsd: 800,
+      healthFactor: 0.941,
+      isLiquidatable: true,
+      liquidateLocked: true, // Locked in borrow incentives
+      lastUpdatedMs: Date.now(),
+    };
+
+    const opportunity: LiquidationOpportunity = {
+      protocol: 'scallop',
+      obligation: mockLockedObligation,
+      debtCoinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+      debtSymbol: 'USDC',
+      debtAmountToRepay: 200_000_000n,
+      debtRepayUsd: 200,
+      collateralCoinType: '0x2::sui::SUI',
+      collateralSymbol: 'SUI',
+      collateralToReceive: 105_000_000_000n,
+      collateralReceiveUsd: 210,
+      expectedGrossProfitUsd: 10,
+      dex: 'cetus',
+      liquidationBonus: 0.05,
+    };
+
+    const built = ZeroCapitalPtbBuilder.buildLiquidationPTB(opportunity);
+    expect(built).toBeDefined();
+
+    const txData = built.tx.getData();
+    // Verify that force_unstake_unhealthy was added as the first MoveCall
+    const firstMoveCall = txData.commands.find((c) => c.$kind === 'MoveCall') as any;
+    expect(firstMoveCall).toBeDefined();
+    expect(firstMoveCall.MoveCall.function).toBe('force_unstake_unhealthy_v3');
   });
 });

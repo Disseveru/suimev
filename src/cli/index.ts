@@ -98,7 +98,7 @@ async function main() {
           {
             coinType: '0x2::sui::SUI',
             symbol: 'SUI',
-            amount: 3000_000_000_000n, // 3000 SUI
+            amount: 500_000_000_000n, // 500 SUI (~$1,000 - $1,500)
             decimals: 9,
             valueUsd: 0,
             liquidationThreshold: 0.80,
@@ -108,7 +108,7 @@ async function main() {
           {
             coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
             symbol: 'USDC',
-            amount: 2200_000_000n, // 2200 USDC
+            amount: 5000_000_000n, // 5,000 USDC debt (HF ~ 0.2 - 0.3)
             decimals: 6,
             valueUsd: 0,
           },
@@ -174,8 +174,8 @@ async function main() {
         protocol: 'navi',
         obligationId: '0x9999999999999999999999999999999999999999999999999999999999999999',
         ownerAddress: '0x9999999999999999999999999999999999999999999999999999999999999999',
-        collaterals: [{ coinType: '0x2::sui::SUI', symbol: 'SUI', amount: 3000_000_000_000n, decimals: 9, valueUsd: 0, liquidationThreshold: 0.8 }],
-        debts: [{ coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC', symbol: 'USDC', amount: 2200_000_000n, decimals: 6, valueUsd: 0 }],
+        collaterals: [{ coinType: '0x2::sui::SUI', symbol: 'SUI', amount: 1000_000_000_000n, decimals: 9, valueUsd: 0, liquidationThreshold: 0.8 }],
+        debts: [{ coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC', symbol: 'USDC', amount: 10000_000_000n, decimals: 6, valueUsd: 0 }],
         totalCollateralUsd: 0,
         totalDebtUsd: 0,
         liquidationThresholdCollateralUsd: 0,
@@ -193,13 +193,17 @@ async function main() {
       const evalMs = (performance.now() - startEval) / ITERATIONS;
       console.log(chalk.green(`Health Factor Evaluation: ${evalMs.toFixed(4)} ms per operation (${Math.floor(1000 / evalMs).toLocaleString()} ops/sec)`));
 
-      const oppBench = HealthFactorEngine.findBestLiquidationOpportunity(testObl)!;
-      const startPtb = performance.now();
-      for (let i = 0; i < 200; i++) {
-        ZeroCapitalPtbBuilder.buildLiquidationPTB(oppBench);
+      const oppBench = HealthFactorEngine.findBestLiquidationOpportunity(testObl);
+      if (oppBench) {
+        const startPtb = performance.now();
+        for (let i = 0; i < 200; i++) {
+          ZeroCapitalPtbBuilder.buildLiquidationPTB(oppBench);
+        }
+        const ptbMs = (performance.now() - startPtb) / 200;
+        console.log(chalk.green(`Zero-Capital PTB Construction: ${ptbMs.toFixed(4)} ms per block (${Math.floor(1000 / ptbMs).toLocaleString()} blocks/sec)`));
+      } else {
+        console.log(chalk.yellow(`Skipping PTB construction benchmark: no liquidatable opportunity formed for test obligation.`));
       }
-      const ptbMs = (performance.now() - startPtb) / 200;
-      console.log(chalk.green(`Zero-Capital PTB Construction: ${ptbMs.toFixed(4)} ms per block (${Math.floor(1000 / ptbMs).toLocaleString()} blocks/sec)`));
       process.exit(0);
 
     case 'replay': {

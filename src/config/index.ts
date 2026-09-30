@@ -48,6 +48,12 @@ const activeRpcUrl =
     ? parsedEnv.ALCHEMY_SUI_MAINNET_RPC
     : parsedEnv.SUI_RPC_URL;
 
+// Select active WebSocket URL (prefer dedicated Alchemy WebSocket over deprecated public fullnode)
+const activeWsUrl =
+  parsedEnv.SUI_WS_URL === 'wss://fullnode.mainnet.sui.io:443' && parsedEnv.ALCHEMY_SUI_MAINNET_RPC
+    ? parsedEnv.ALCHEMY_SUI_MAINNET_RPC.replace(/^http/i, 'ws')
+    : parsedEnv.SUI_WS_URL;
+
 // Parse backup RPCs array
 const backupRpcs = parsedEnv.SUI_BACKUP_RPCS
   ? parsedEnv.SUI_BACKUP_RPCS.split(',').map((u) => u.trim()).filter(Boolean)
@@ -120,7 +126,7 @@ export const CONFIG = {
   alchemyMainnetRpc: parsedEnv.ALCHEMY_SUI_MAINNET_RPC,
   alchemyTestnetRpc: parsedEnv.ALCHEMY_SUI_TESTNET_RPC,
   sentioApiKey: parsedEnv.SENTIO_API_KEY,
-  wsUrl: parsedEnv.SUI_WS_URL,
+  wsUrl: activeWsUrl,
   pythHermesUrl: parsedEnv.PYTH_HERMES_URL,
   pythApiKey: parsedEnv.PYTH_API_KEY,
   operatorKeypair,
