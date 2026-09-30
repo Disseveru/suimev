@@ -44,7 +44,6 @@ def create_notebook():
         "metadata": {},
         "outputs": [],
         "source": [
-            "from IPython.display import display\n",
             "import requests\n",
             "import pandas as pd\n",
             "import json\n",
@@ -91,7 +90,7 @@ def create_notebook():
             "}])\n",
             "\n",
             "print('[OK] Successfully connected to live Sui Mainnet RPC')\n",
-            "display(net_df)"
+            "net_df"
         ]
     })
 
@@ -121,7 +120,6 @@ def create_notebook():
         "metadata": {},
         "outputs": [],
         "source": [
-            "from IPython.display import display\n",
             "# Verified Sui Mainnet On-Chain Pyth PriceInfo Object IDs\n",
             "# Reading on-chain Move object state directly via Alchemy / Multi-RPC provides authoritative\n",
             "# consensus price state without being blocked by external API key paywalls.\n",
@@ -172,7 +170,7 @@ def create_notebook():
             "\n",
             "pyth_df = pd.DataFrame(oracle_records)\n",
             "print('[OK] Ingested authoritative on-chain Pyth Move price feeds')\n",
-            "display(pyth_df)"
+            "pyth_df"
         ]
     })
 
@@ -207,7 +205,6 @@ def create_notebook():
         "metadata": {},
         "outputs": [],
         "source": [
-            "from IPython.display import display\n",
             "# Real audited positions from Sui Mainnet (Scallop & NAVI)\n",
             "AUDITED_OBLIGATIONS = [\n",
             "    {\n",
@@ -291,7 +288,7 @@ def create_notebook():
             "\n",
             "hf_df = pd.DataFrame(hf_records)\n",
             "print('[METRICS] Obligation Valuation & Tier Classification Results:')\n",
-            "display(hf_df)"
+            "hf_df"
         ]
     })
 
@@ -326,7 +323,6 @@ def create_notebook():
         "metadata": {},
         "outputs": [],
         "source": [
-            "from IPython.display import display\n",
             "opp_records = []\n",
             "\n",
             "for pos in AUDITED_OBLIGATIONS:\n",
@@ -370,7 +366,7 @@ def create_notebook():
             "\n",
             "opp_df = pd.DataFrame(opp_records)\n",
             "print('[OPPORTUNITIES] Formed Zero-Capital Liquidation Opportunities:')\n",
-            "display(opp_df)"
+            "opp_df"
         ]
     })
 
@@ -413,7 +409,7 @@ def create_notebook():
             "\n",
             "> [!NOTE]\n",
             "> **Move Resource Safety (Balance<T> vs Coin<T>):**\n",
-            "> In Move, `Balance<T>` lacks the `drop` ability. If a PTB leaves an unconsumed `Balance<T>`, consensus aborts with a `dropmiss` error.\n",
+            "> In Move, `Balance<T>` lacks the `drop` ability. If a PTB leaves an unconsumed `Balance<T>`, consensus aborts because the type lacks the 'drop' ability.\n",
             "> The engine uses `0x2::coin::from_balance` to convert all transient balances to droppable `Coin<T>` before finalizing."
         ]
     })

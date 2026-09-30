@@ -6,7 +6,9 @@
     "dist/**",
     "node_modules/**",
     "*.cspell.json",
-    "cspell.json"
+    "cspell.json",
+    "notebooks/**",
+    "scripts/**"
   ],
   "cSpell.words": [
     "afsui",
@@ -14,6 +16,7 @@
     "alchemy",
     "alkimi",
     "ausd",
+    "axhline",
     "bech",
     "cetus",
     "cetusprotocol",
@@ -29,9 +32,14 @@
     "devnet",
     "dourolabs",
     "drf",
+    "edgecolor",
     "emode",
     "fdusd",
+    "figsize",
     "flashloan",
+    "fontsize",
+    "fontweight",
+    "frameon",
     "fullnode",
     "haedal",
     "Haedal",
@@ -41,10 +49,12 @@
     "hermes",
     "ika",
     "instadapp",
+    "kernelspec",
     "keypair",
     "Keypair",
     "keypairs",
     "Keypairs",
+    "linestyle",
     "liquidat",
     "liquidatable",
     "Liquidatable",
@@ -103,6 +113,7 @@
     "Watchlist",
     "wbtc",
     "weth",
+    "whitegrid",
     "wusdc",
     "WUSDC",
     "wusdt",
@@ -111,10 +122,16 @@
     "xagm",
     "xbtc",
     "xaum",
+    "xlabel",
+    "xlim",
     "ybtc",
+    "ylabel",
+    "ylim",
+    "yscale",
     "zwbtc"
   ],
   "cSpell.ignoreWords": [
     "qexampleprivatekeyreplacewithyourownkeyforproduction"
-  ]
+  ],
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
 }
