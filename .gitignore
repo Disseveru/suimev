@@ -20,7 +20,13 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# Binaries
+# Binaries & bytecode
 bin/*.exe
 bin/tenderly*
 !bin/.gitkeep
+*.mv
+
+# Python cache
+__pycache__/
+*.pyc
+

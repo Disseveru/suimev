@@ -102,8 +102,12 @@ export class FastPtbTemplateEngine {
   public static async buildAndSignFast(tx: Transaction): Promise<{ bytes: Uint8Array; signature: string }> {
     const t0 = performance.now();
     
-    // If gas payment was set, build() executes 100% locally in V8
-    const bytes = await tx.build({ client: this.cachedGasCoin ? undefined : rpcManager.getClient() });
+    let bytes: Uint8Array;
+    try {
+      bytes = await tx.build({});
+    } catch {
+      bytes = await tx.build({ client: rpcManager.getClient() });
+    }
     const { signature } = await CONFIG.operatorKeypair.signTransaction(bytes);
     
     const elapsed = performance.now() - t0;

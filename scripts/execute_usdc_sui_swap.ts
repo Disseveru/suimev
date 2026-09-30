@@ -4,7 +4,7 @@ import { CONFIG } from '../src/config/index.js';
 import { CETUS_CONFIG, SUI_CLOCK_OBJECT_ID } from '../src/config/constants.js';
 
 async function executeSwap() {
-  const client = SuiClientManager.getInstance([CONFIG.rpcUrl, ...CONFIG.backupRpcs]).getClient();
+  const client = SuiClientManager.getInstance().getClient();
   const operatorKeypair = CONFIG.operatorKeypair;
   const operatorAddress = CONFIG.operatorAddress;
 
