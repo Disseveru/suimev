@@ -32,6 +32,10 @@ export class ZeroCapitalPtbBuilder {
     opportunity: LiquidationOpportunity,
     existingTx?: Transaction
   ): BuiltLiquidationPTB {
+    if (opportunity.obligation.healthFactor >= 1.0) {
+      throw new Error(`Zero-capital solvency guard triggered: Borrower HF ${opportunity.obligation.healthFactor} >= 1.0 (Safe)`);
+    }
+
     const tx = existingTx ?? new Transaction();
     tx.setSender(CONFIG.operatorAddress);
     tx.setGasBudget(BigInt(CONFIG.gasBudget));

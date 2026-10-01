@@ -19,6 +19,23 @@ export class TransactionExecutor {
   ): Promise<ExecutionResult> {
     const startTime = Date.now();
     const suiPriceUsd = priceCache.getPriceUsd('0x2::sui::SUI') || 2.50;
+    // Safety Gate: Pyth Price Freshness Validation
+    const nowMs = Date.now();
+    const MAX_AGE_MS = 60000;
+    const debtPrice = priceCache.getPriceBySymbol(opportunity.debtSymbol);
+    const colPrice = priceCache.getPriceBySymbol(opportunity.collateralSymbol);
+    
+    if (debtPrice && (nowMs - debtPrice.lastUpdatedMs > MAX_AGE_MS)) {
+      throw new Error(`Oracle price for ${opportunity.debtSymbol} is older than ${MAX_AGE_MS}ms. Aborting.`);
+    }
+    if (colPrice && (nowMs - colPrice.lastUpdatedMs > MAX_AGE_MS)) {
+      throw new Error(`Oracle price for ${opportunity.collateralSymbol} is older than ${MAX_AGE_MS}ms. Aborting.`);
+    }
+
+    // Safety Gate: Net Profit Validation (Accounts for flash loan, DEX swap, and gas costs)
+    if (netProfitUsd < CONFIG.minProfitUsd) {
+      throw new Error(`Net profit ${netProfitUsd.toFixed(2)} USD is below minimum threshold ${CONFIG.minProfitUsd} USD. Aborting.`);
+    }
 
     // Set priority gas price to front-run competing searchers via Dynamic Priority Gas Auction (PGA)
     try {

@@ -33,6 +33,49 @@ export const SCALLOP_CONFIG = {
   vescaSubsWhitelist: '0xaa0a920bf20b43aa1a8c19cf39df457a835ce98b2820a0d1090420a7e5ff66fe',
 };
 
+// Authoritative Scallop mainnet shared object initial versions
+// IMPORTANT: If Scallop migrates objects, these versions must be updated.
+// These are used for zero-RPC PTB construction latency optimization.
+export const SCALLOP_SHARED_VERSIONS = {
+  version: 10471556,
+  market: 10471556,
+  coinDecimalsRegistry: 10471556,
+  xOracle: 10471556,
+  borrowIncentivePools: 10471556,
+  borrowIncentiveAccounts: 10471556,
+};
+
+/**
+ * Validates the hardcoded shared object initial versions against on-chain state.
+ * Expected to be called during startup to ensure no silent failures if objects migrate.
+ */
+export async function validateSharedVersions(client: any): Promise<void> {
+  const expectedVersions: Record<string, number> = {
+    [SCALLOP_CONFIG.version]: SCALLOP_SHARED_VERSIONS.version,
+    [SCALLOP_CONFIG.market]: SCALLOP_SHARED_VERSIONS.market,
+    [SCALLOP_CONFIG.coinDecimalsRegistry]: SCALLOP_SHARED_VERSIONS.coinDecimalsRegistry,
+    [SCALLOP_CONFIG.xOracle]: SCALLOP_SHARED_VERSIONS.xOracle,
+    [SCALLOP_CONFIG.borrowIncentivePools]: SCALLOP_SHARED_VERSIONS.borrowIncentivePools,
+    [SCALLOP_CONFIG.borrowIncentiveAccounts]: SCALLOP_SHARED_VERSIONS.borrowIncentiveAccounts,
+  };
+  const objects = Object.keys(expectedVersions);
+  
+  const res = await client.multiGetObjects({
+    ids: objects,
+    options: { showOwner: true }
+  });
+  
+  for (const obj of res) {
+    if (obj.data?.owner && typeof obj.data.owner === 'object' && 'Shared' in obj.data.owner) {
+      const initial = obj.data.owner.Shared.initial_shared_version;
+      const expected = expectedVersions[obj.data.objectId];
+      if (initial && expected && Number(initial) !== expected) {
+        throw new Error(`Shared object initial version mismatch for ${obj.data.objectId}. Expected ${expected}, got ${initial}`);
+      }
+    }
+  }
+}
+
 // Cetus CLMM Mainnet Configuration
 export const CETUS_CONFIG = {
   clmmPoolPackageId: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb',
