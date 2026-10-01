@@ -28,12 +28,12 @@ export class FastPtbTemplateEngine {
   // Authoritative mainnet shared object initial versions
   public static readonly SHARED_OBJECT_VERSIONS = {
     CLOCK: { objectId: SUI_CLOCK_OBJECT_ID, initialSharedVersion: 1, mutable: false },
-    SCALLOP_VERSION: { objectId: SCALLOP_CONFIG.version, initialSharedVersion: SCALLOP_SHARED_VERSIONS.version, mutable: false },
-    SCALLOP_MARKET: { objectId: SCALLOP_CONFIG.market, initialSharedVersion: SCALLOP_SHARED_VERSIONS.market, mutable: true },
-    SCALLOP_DECIMALS: { objectId: SCALLOP_CONFIG.coinDecimalsRegistry, initialSharedVersion: SCALLOP_SHARED_VERSIONS.coinDecimalsRegistry, mutable: false },
-    SCALLOP_XORACLE: { objectId: SCALLOP_CONFIG.xOracle, initialSharedVersion: SCALLOP_SHARED_VERSIONS.xOracle, mutable: false },
-    SCALLOP_INCENTIVE_POOLS: { objectId: SCALLOP_CONFIG.borrowIncentivePools, initialSharedVersion: SCALLOP_SHARED_VERSIONS.borrowIncentivePools, mutable: true },
-    SCALLOP_INCENTIVE_ACCOUNTS: { objectId: SCALLOP_CONFIG.borrowIncentiveAccounts, initialSharedVersion: SCALLOP_SHARED_VERSIONS.borrowIncentiveAccounts, mutable: true },
+    SCALLOP_VERSION: { objectId: SCALLOP_CONFIG.version, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.version], mutable: false },
+    SCALLOP_MARKET: { objectId: SCALLOP_CONFIG.market, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.market], mutable: true },
+    SCALLOP_DECIMALS: { objectId: SCALLOP_CONFIG.coinDecimalsRegistry, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.coinDecimalsRegistry], mutable: false },
+    SCALLOP_XORACLE: { objectId: SCALLOP_CONFIG.xOracle, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.xOracle], mutable: false },
+    SCALLOP_INCENTIVE_POOLS: { objectId: SCALLOP_CONFIG.borrowIncentivePools, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.borrowIncentivePools], mutable: true },
+    SCALLOP_INCENTIVE_ACCOUNTS: { objectId: SCALLOP_CONFIG.borrowIncentiveAccounts, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.borrowIncentiveAccounts], mutable: true },
   };
 
   /**
