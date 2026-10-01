@@ -341,6 +341,12 @@ export class ZeroCapitalPtbBuilder {
         }
 
         if (isLocked) {
+          // AGENTS.md §9.2 Abort 2 Guard: Calling force_unstake_unhealthy on an obligation with
+          // on-chain riskLevel < 1.0 aborts with Move error 2 (obligation_is_healthy).
+          const riskInfo = await scallopProtocol.getOnChainObligationRisk(oblId);
+          if (!riskInfo.isLiquidatable) {
+            throw new Error(`Abort 2 Guard: Scallop on-chain riskLevel ${riskInfo.riskLevel.toFixed(4)} < 1.0 (account is healthy on-chain per AGENTS.md §9.2)`);
+          }
           ScallopPtbBuilder.addForceUnstakeUnhealthy(scallopTx.txBlock, oblId);
           // Invalidate cache once we've added the unlock instruction — recheck next time
           this.lockCache.delete(oblId);

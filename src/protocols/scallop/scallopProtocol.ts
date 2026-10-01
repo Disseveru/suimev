@@ -43,8 +43,9 @@ export class ScallopProtocol {
       this.sdk = new Scallop({
         addressId: SCALLOP_CONFIG.addressId,
         network: CONFIG.network === 'mainnet' ? 'mainnet' : 'testnet',
-        fullnodeUrl: CONFIG.rpcUrl.includes('alchemy') ? 'https://fullnode.mainnet.sui.io:443' : CONFIG.rpcUrl,
+        fullnodeUrl: CONFIG.rpcUrl,
         walletAddress: CONFIG.operatorAddress,
+        pythApiKey: CONFIG.pythApiKey,
       });
 
       await this.sdk.init();
@@ -78,6 +79,30 @@ export class ScallopProtocol {
     } catch {
       return false;
     }
+  }
+
+  public async getOnChainObligationRisk(obligationId: string): Promise<{
+    riskLevel: number;
+    unhealthyCollateralValue: number;
+    isLiquidatable: boolean;
+  }> {
+    try {
+      if (this.sdk) {
+        const query = await this.sdk.createScallopQuery();
+        const account = await query.getObligationAccountById(obligationId);
+        if (account) {
+          const isLiquidatable = (account.totalRiskLevel >= 1.0) || (account.totalUnhealthyCollateralValue > 0);
+          return {
+            riskLevel: account.totalRiskLevel,
+            unhealthyCollateralValue: account.totalUnhealthyCollateralValue,
+            isLiquidatable,
+          };
+        }
+      }
+    } catch {
+      // Fall through to conservative default
+    }
+    return { riskLevel: 0, unhealthyCollateralValue: 0, isLiquidatable: false };
   }
 
   public async createScallopBuilder() {
