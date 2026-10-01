@@ -292,6 +292,19 @@ For high-liquidity Sui pairs, Cetus CLMM's `pool::flash_swap` provides superior 
 - Always re-check on-chain prices immediately before simulation, especially for stale oracles.
 - If a price is more than 10 seconds old in Pyth or more than the protocol's configured staleness threshold, refresh it before simulating.
 
+### 9.4 NAVI Protocol Liquidation Parameters & Close Factor Invariant
+
+- **35% Close Factor Enforcement:**
+  - In NAVI Protocol, a maximum of **35%** of a borrower's debt for a given asset may be repaid in a single liquidation transaction (`debtToCover = userVariableDebt * 0.35`).
+  - Searchers **MUST** size the target repayment to 35% of user debt to avoid paying surplus flash loan fees (5 bps).
+  - When calling `liquidation_v2`, any excess debt balance supplied is returned in `leftoverDebtBalance`. The PTB builder must merge this back into the debt coin pool before flash loan repayment.
+- **Health Factor Verification:**
+  $$H_f = \frac{\sum (\text{Supply}_i \text{ (USD)} \times \text{Liquidation Threshold}_i)}{\text{Total Borrows in USD}}$$
+  Liquidations are only valid when $H_f < 1.0000$.
+- **Liquidation Bonus & Profitability Formula:**
+  $$\text{NetProfit} = \text{SeizedCollateralValue} - \text{RepaidDebtValue} - \text{GasCost} - \text{FlashLoanFee} - \text{DEXSlippage}$$
+  Only broadcast when $\text{NetProfit} \ge \text{MIN\_PROFIT\_USD}$.
+
 ---
 
 ## 10. Sui Move Type & Resource Preservation

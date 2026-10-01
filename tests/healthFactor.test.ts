@@ -215,4 +215,51 @@ describe('HealthFactorEngine', () => {
       expect(opp.expectedGrossProfitUsd).toBeCloseTo(4.76, 1);
     }
   });
+
+  it('should enforce 35% close factor cap for NAVI protocol obligations by default', () => {
+    // 1000 SUI collateral ($2000)
+    // 1800 USDC debt ($1800)
+    const obligation: ObligationState = {
+      protocol: 'navi',
+      obligationId: '0xNaviDefaultUser',
+      ownerAddress: '0xNaviDefaultUser',
+      collaterals: [
+        {
+          coinType: '0x2::sui::SUI',
+          symbol: 'SUI',
+          amount: 1000_000_000_000n,
+          decimals: 9,
+          valueUsd: 2000,
+          liquidationThreshold: 0.80,
+        },
+      ],
+      debts: [
+        {
+          coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+          symbol: 'USDC',
+          amount: 1800_000_000n,
+          decimals: 6,
+          valueUsd: 1800,
+        },
+      ],
+      totalCollateralUsd: 2000,
+      totalDebtUsd: 1800,
+      liquidationThresholdCollateralUsd: 1600,
+      healthFactor: 0.8888,
+      isLiquidatable: true,
+      lastUpdatedMs: Date.now(),
+    };
+
+    // By default without passing closeFactor, NAVI obligation uses 35% close factor per AGENTS.md §9.4
+    const opportunity = HealthFactorEngine.findBestLiquidationOpportunity(obligation);
+    expect(opportunity).not.toBeNull();
+    if (opportunity) {
+      // 35% of 1800 USDC = 630 USDC (630_000_000 units)
+      expect(opportunity.debtAmountToRepay).toBe(630_000_000n);
+      expect(opportunity.debtRepayUsd).toBeCloseTo(630, 1);
+      // Seized collateral with 5% bonus = 630 * 1.05 = $661.50
+      expect(opportunity.collateralReceiveUsd).toBeCloseTo(661.5, 1);
+      expect(opportunity.expectedGrossProfitUsd).toBeCloseTo(31.5, 1);
+    }
+  });
 });

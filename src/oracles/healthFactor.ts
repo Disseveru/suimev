@@ -74,14 +74,19 @@ export class HealthFactorEngine {
 
   /**
    * Find the most profitable liquidation pair (debt to repay vs collateral to seize)
+   * Enforces protocol-specific close factor: 35% on NAVI per official docs, 50% on Scallop.
    */
   public static findBestLiquidationOpportunity(
     obligation: ObligationState,
-    closeFactor: number = CONFIG.liquidationCloseFactor
+    closeFactor?: number
   ): LiquidationOpportunity | null {
     if (!obligation.isLiquidatable || obligation.debts.length === 0 || obligation.collaterals.length === 0) {
       return null;
     }
+
+    const effectiveCloseFactor = closeFactor ?? (
+      obligation.protocol === 'navi' ? CONFIG.naviCloseFactor : CONFIG.liquidationCloseFactor
+    );
 
     let bestOpportunity: LiquidationOpportunity | null = null;
 
@@ -107,8 +112,8 @@ export class HealthFactorEngine {
         const colPrice = priceCache.getPriceUsd(targetCollateral.coinType);
         if (debtPrice <= 0 || colPrice <= 0) continue;
 
-        // Compute maximum repayable debt based on close factor (e.g. 50% max)
-        const maxRepayAmount = (targetDebt.amount * BigInt(Math.floor(closeFactor * 10000))) / 10000n;
+        // Compute maximum repayable debt based on protocol close factor (35% for NAVI, 50% for Scallop)
+        const maxRepayAmount = (targetDebt.amount * BigInt(Math.floor(effectiveCloseFactor * 10000))) / 10000n;
         if (maxRepayAmount <= 0n) continue;
 
         // Liquidation bonus: usually 5% - 8% based on collateral token
