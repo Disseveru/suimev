@@ -105,6 +105,32 @@ export class ScallopProtocol {
     return { riskLevel: 0, unhealthyCollateralValue: 0, isLiquidatable: false };
   }
 
+  public async getObligationCoinNames(obligationId: string): Promise<string[]> {
+    try {
+      if (this.sdk) {
+        const query = await this.sdk.createScallopQuery();
+        const oblData = await query.queryObligation(obligationId);
+        if (oblData) {
+          const coinTypes = [
+            ...oblData.collaterals.map((c: any) => c.type),
+            ...oblData.debts.map((d: any) => d.type),
+          ];
+          const names = new Set<string>();
+          for (const cType of coinTypes) {
+            const parsed = (query as any).utils?.parseCoinNameFromType?.(cType);
+            if (parsed && typeof parsed === 'string') {
+              names.add(parsed);
+            }
+          }
+          return Array.from(names);
+        }
+      }
+    } catch {
+      // Fall through to empty list on error
+    }
+    return [];
+  }
+
   public async createScallopBuilder() {
     if (!this.sdk) {
       await this.initialize();

@@ -1,9 +1,36 @@
 import { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 import { SCALLOP_CONFIG, SUI_CLOCK_OBJECT_ID } from '../../config/constants.js';
+import { CetusRouter } from '../dex/cetusRouter.js';
+import { DeepBookRouter } from '../dex/deepbookRouter.js';
 
 export interface ScallopFlashLoanResult {
   loanCoin: TransactionObjectArgument;
   receipt: TransactionObjectArgument;
+}
+
+export interface ScallopLiquidateResult {
+  collateralCoin: TransactionObjectArgument;
+  leftoverDebtCoin: TransactionObjectArgument;
+}
+
+export interface BuildScallopLiquidationParams {
+  tx?: Transaction;
+  obligationId: string;
+  debtCoinType: string;
+  collateralCoinType: string;
+  debtAmountToRepay: bigint;
+  expectedCollateralAmount?: bigint;
+  recipientAddress: string;
+  isLocked?: boolean;
+  dex?: 'cetus' | 'deepbook';
+  maxSlippageBps?: number;
+}
+
+export interface ScallopCompleteLiquidationResult {
+  tx: Transaction;
+  collateralCoin: TransactionObjectArgument;
+  leftoverDebtCoin: TransactionObjectArgument;
+  profitCoin: TransactionObjectArgument;
 }
 
 /**
@@ -34,7 +61,19 @@ export class ScallopPtbBuilder {
 
   /**
    * Add Scallop Liquidation call to PTB
-   * Pays debt asset to liquidate undercollateralized obligation and receive collateral
+   * Pays debt asset to liquidate undercollateralized obligation and receive collateral.
+   *
+   * On-chain Move signature:
+   * public fun liquidate<DebtType, CollateralType>(
+   *   version: &Version,
+   *   obligation: &mut Obligation,
+   *   market: &mut Market,
+   *   available_repay_coin: Coin<DebtType>,
+   *   coin_decimals_registry: &CoinDecimalsRegistry,
+   *   x_oracle: &XOracle,
+   *   clock: &Clock,
+   *   ctx: &mut TxContext,
+   * ): (Coin<DebtType>, Coin<CollateralType>)
    */
   public static addLiquidate(
     tx: Transaction,
@@ -57,6 +96,7 @@ export class ScallopPtbBuilder {
       typeArguments: [debtCoinType, collateralCoinType],
     });
 
+    // Returns [collateralCoin, leftoverDebtCoin]
     return [collateralCoin, leftoverDebt];
   }
 
@@ -108,4 +148,86 @@ export class ScallopPtbBuilder {
       ],
     });
   }
+
+  /**
+   * Build a complete Zero-Capital Atomic Scallop Liquidation PTB:
+   *   [Unlock Incentive Account (if locked)]
+   *   -> [Scallop Flash Loan Borrow]
+   *   -> [Scallop Liquidate]
+   *   -> [DEX Swap (Collateral -> Debt)]
+   *   -> [Repay Flash Loan]
+   *   -> [Transfer Net Profit to Recipient]
+   */
+  public static buildCompleteLiquidation(
+    params: BuildScallopLiquidationParams
+  ): ScallopCompleteLiquidationResult {
+    const tx = params.tx ?? new Transaction();
+    const slippageBps = params.maxSlippageBps ?? 50;
+
+    // 1. Force unstake from borrow incentive pool if obligation is locked
+    if (params.isLocked) {
+      this.addForceUnstakeUnhealthy(tx, params.obligationId);
+    }
+
+    // 2. Borrow flash loan for exact debt repayment amount (0 fee on Scallop)
+    const { loanCoin, receipt } = this.addFlashLoan(
+      tx,
+      params.debtCoinType,
+      params.debtAmountToRepay
+    );
+
+    // 3. Execute liquidation
+    const [collateralCoin, leftoverDebtCoin] = this.addLiquidate(
+      tx,
+      params.obligationId,
+      loanCoin,
+      params.debtCoinType,
+      params.collateralCoinType
+    );
+
+    // 4. Swap collateral for debt asset
+    let swappedDebtCoin: TransactionObjectArgument;
+    if (params.collateralCoinType.toLowerCase() === params.debtCoinType.toLowerCase()) {
+      // Same-asset liquidation bypass: No swap needed
+      swappedDebtCoin = collateralCoin;
+    } else if (params.dex === 'deepbook' && DeepBookRouter.hasPool(params.collateralCoinType, params.debtCoinType)) {
+      const quote = DeepBookRouter.getQuote(
+        params.collateralCoinType,
+        params.debtCoinType,
+        params.expectedCollateralAmount ?? 0n,
+        slippageBps
+      );
+      swappedDebtCoin = DeepBookRouter.addSwap(tx, quote, collateralCoin);
+    } else {
+      const quote = CetusRouter.getQuote(
+        params.collateralCoinType,
+        params.debtCoinType,
+        params.expectedCollateralAmount ?? 0n,
+        slippageBps
+      );
+      swappedDebtCoin = CetusRouter.addSwap(tx, quote, collateralCoin);
+    }
+
+    // Merge any unconsumed leftover debt coin back into swappedDebtCoin
+    tx.mergeCoins(swappedDebtCoin, [leftoverDebtCoin]);
+
+    // 5. Split repayment coin for flash loan
+    const [repayCoin] = tx.splitCoins(swappedDebtCoin, [
+      tx.pure.u64(params.debtAmountToRepay),
+    ]);
+
+    // 6. Repay flash loan
+    this.addRepayFlashLoan(tx, params.debtCoinType, receipt, repayCoin);
+
+    // 7. Transfer remaining profit coin to recipient
+    tx.transferObjects([swappedDebtCoin], tx.pure.address(params.recipientAddress));
+
+    return {
+      tx,
+      collateralCoin,
+      leftoverDebtCoin,
+      profitCoin: swappedDebtCoin,
+    };
+  }
 }
+

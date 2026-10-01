@@ -303,13 +303,16 @@ export class ZeroCapitalPtbBuilder {
         // 1. Update Pyth asset prices in xOracle for all assets in the target obligation
         // Note: Scallop requires fresh prices for ALL collateral and debt assets in the obligation
         // to evaluate health factor during force_unstake_unhealthy and liquidate without abort 1025.
+        const oblId = opportunity.obligation.obligationId;
+        const dynamicCoinNames = await scallopProtocol.getObligationCoinNames(oblId);
+        const exactCoinNames = new Set<string>(dynamicCoinNames);
+
         const allTypes = [
           ...opportunity.obligation.collaterals.filter(c => c.amount > 0n).map(c => c.coinType),
           ...opportunity.obligation.debts.filter(d => d.amount > 0n).map(d => d.coinType),
           opportunity.debtCoinType,
           opportunity.collateralCoinType,
         ];
-        const exactCoinNames = new Set<string>();
         for (const coinType of allTypes) {
           try {
             const parsedName = (builder as any).utils?.parseCoinNameFromType?.(coinType);
@@ -328,7 +331,6 @@ export class ZeroCapitalPtbBuilder {
         }
 
         // 2. Check obligation lock state — use TTL cache to skip extra RPC on retries
-        const oblId = opportunity.obligation.obligationId;
         const cached = this.lockCache.get(oblId);
         const now = Date.now();
         let isLocked: boolean;
