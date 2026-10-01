@@ -25,17 +25,27 @@ export interface GraphQLObjectResult {
 export class SuiGraphQLService {
   private static instance: SuiGraphQLService;
   private client: SuiGraphQLClient;
+  private primaryClient: SuiGraphQLClient;
+  private fallbackClient: SuiGraphQLClient;
   private endpointUrl: string;
   private isHealthy = true;
   private lastLatencyMs = 0;
 
   private constructor() {
-    this.endpointUrl = process.env.SUI_GRAPHQL_URL || 'https://sui-mainnet.mystenlabs.com/graphql';
-    this.client = new SuiGraphQLClient({
+    this.endpointUrl = process.env.SUI_GRAPHQL_URL || 'https://graphql.mainnet.sui.io/graphql';
+    const fallbackUrl = process.env.SUI_BACKUP_GRAPHQL_URL || 'https://sui-mainnet.mystenlabs.com/graphql';
+    const network = (CONFIG.network === 'mainnet' ? 'mainnet' : 'testnet') as 'mainnet' | 'testnet';
+    
+    this.primaryClient = new SuiGraphQLClient({
       url: this.endpointUrl,
-      network: (CONFIG.network === 'mainnet' ? 'mainnet' : 'testnet') as 'mainnet' | 'testnet',
+      network,
     });
-    logger.info({ endpoint: this.endpointUrl }, 'Initialized Modern Sui GraphQL Client');
+    this.fallbackClient = new SuiGraphQLClient({
+      url: fallbackUrl,
+      network,
+    });
+    this.client = this.primaryClient;
+    logger.info({ endpoint: this.endpointUrl, fallback: fallbackUrl }, 'Initialized Modern Sui GraphQL Client with Fallback');
   }
 
   public static getInstance(): SuiGraphQLService {
@@ -46,7 +56,7 @@ export class SuiGraphQLService {
   }
 
   public getClient(): SuiGraphQLClient {
-    return this.client;
+    return this.primaryClient;
   }
 
   public getEndpointUrl(): string {
@@ -59,6 +69,26 @@ export class SuiGraphQLService {
 
   public getLastLatencyMs(): number {
     return this.lastLatencyMs;
+  }
+
+  private async executeQuery<T = any>(queryString: string, variables?: Record<string, unknown>): Promise<{ data: T | null; errors?: any[] }> {
+    try {
+      const res = await this.primaryClient.query({
+        query: queryString,
+        variables: variables ?? {},
+      });
+      return { data: res.data as T, errors: res.errors };
+    } catch (primaryErr) {
+      try {
+        const res = await this.fallbackClient.query({
+          query: queryString,
+          variables: variables ?? {},
+        });
+        return { data: res.data as T, errors: res.errors };
+      } catch (fallbackErr) {
+        throw primaryErr;
+      }
+    }
   }
 
   /**
@@ -97,10 +127,7 @@ export class SuiGraphQLService {
         }
       `;
 
-      const res = await this.client.query({
-        query,
-        variables: { address },
-      });
+      const res = await this.executeQuery(query, { address });
 
       this.lastLatencyMs = Date.now() - startMs;
       this.isHealthy = true;
@@ -141,10 +168,7 @@ export class SuiGraphQLService {
         }
       `;
 
-      const res = await this.client.query({
-        query,
-        variables: {},
-      });
+      const res = await this.executeQuery(query, {});
       this.lastLatencyMs = Date.now() - startMs;
       this.isHealthy = true;
 
@@ -169,13 +193,10 @@ export class SuiGraphQLService {
   public async query<T = unknown>(queryString: string, variables?: Record<string, unknown>): Promise<T | null> {
     const startMs = Date.now();
     try {
-      const res = await this.client.query({
-        query: queryString,
-        variables: variables ?? {},
-      });
+      const res = await this.executeQuery<T>(queryString, variables);
       this.lastLatencyMs = Date.now() - startMs;
       this.isHealthy = true;
-      return res.data as T;
+      return res.data;
     } catch (err) {
       this.lastLatencyMs = Date.now() - startMs;
       this.isHealthy = false;
