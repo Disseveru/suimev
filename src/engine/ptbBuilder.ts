@@ -8,6 +8,7 @@ import { ScallopPtbBuilder } from '../protocols/scallop/scallopPtb.js';
 import { scallopProtocol } from '../protocols/scallop/scallopProtocol.js';
 import { CetusRouter } from '../protocols/dex/cetusRouter.js';
 import { DeepBookRouter } from '../protocols/dex/deepbookRouter.js';
+import { AstrosRouter } from '../protocols/dex/astrosRouter.js';
 import * as navi from '@naviprotocol/lending';
 import { logger } from '../ui/logger.js';
 

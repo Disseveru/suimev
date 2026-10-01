@@ -1,5 +1,6 @@
 import { Scallop } from '@scallop-io/sui-scallop-sdk';
 import { SuiClientManager } from '../../client/suiClient.js';
+import { suiGraphQL } from '../../client/graphqlClient.js';
 import { SCALLOP_CONFIG } from '../../config/constants.js';
 import { CONFIG } from '../../config/index.js';
 import { logger } from '../../ui/logger.js';
@@ -68,10 +69,15 @@ export class ScallopProtocol {
         return await query.getObligationLocked(obligationId);
       }
     } catch {
-      // Fall through to direct on-chain object query
+      // Fall through to GraphQL / direct object query
     }
 
     try {
+      const gqlObj = await suiGraphQL.getObject(obligationId);
+      if (gqlObj?.contents) {
+        return Boolean((gqlObj.contents as any).liquidate_locked);
+      }
+
       const client = SuiClientManager.getInstance().getClient();
       const obj = await client.getObject({ id: obligationId, options: { showContent: true } });
       const fields = (obj.data?.content as any)?.fields;

@@ -94,19 +94,21 @@ export class HealthFactorEngine {
     // Search across all debt and collateral combinations to find the highest-profit valid pair
     for (const targetDebt of obligation.debts) {
       for (const targetCollateral of obligation.collaterals) {
-        // Check DEX route availability on Cetus and DeepBook
+        // Check DEX route availability on Cetus, DeepBook, or Astros Aggregator
         const hasCetusRoute = CetusRouter.hasPool(targetCollateral.coinType, targetDebt.coinType);
         const hasDeepBookRoute = DeepBookRouter.hasPool(targetCollateral.coinType, targetDebt.coinType);
         const isSameAsset = targetCollateral.coinType.toLowerCase() === targetDebt.coinType.toLowerCase();
 
-        if (!hasCetusRoute && !hasDeepBookRoute && !isSameAsset) continue;
-
-        // Determine best DEX
-        let selectedDex: 'cetus' | 'deepbook' = 'cetus';
-        if (CONFIG.preferredDex === 'deepbook') {
-          selectedDex = hasDeepBookRoute ? 'deepbook' : 'cetus';
+        // Determine best DEX (Astros Aggregator acts as universal multi-hop aggregator)
+        let selectedDex: 'cetus' | 'deepbook' | 'astros' = 'cetus';
+        if (CONFIG.preferredDex === 'deepbook' && hasDeepBookRoute) {
+          selectedDex = 'deepbook';
+        } else if (hasCetusRoute) {
+          selectedDex = 'cetus';
+        } else if (hasDeepBookRoute) {
+          selectedDex = 'deepbook';
         } else {
-          selectedDex = hasCetusRoute ? 'cetus' : 'deepbook';
+          selectedDex = 'astros';
         }
 
         const debtPrice = priceCache.getPriceUsd(targetDebt.coinType);

@@ -4,7 +4,7 @@
 
 export type ProtocolType = 'navi' | 'scallop';
 
-export type DEXType = 'cetus' | 'deepbook';
+export type DEXType = 'cetus' | 'deepbook' | 'astros';
 
 export interface CoinMetadataConfig {
   symbol: string;

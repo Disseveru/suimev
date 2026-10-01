@@ -4,6 +4,7 @@ import { rpcManager } from '../client/suiClient.js';
 import { CONFIG } from '../config/index.js';
 import { logger } from '../ui/logger.js';
 import { priceCache } from '../oracles/priceCache.js';
+import { telemetry } from './telemetry.js';
 
 /**
  * High-Performance Transaction Executor & Gas Optimizer
@@ -126,9 +127,31 @@ export class TransactionExecutor {
       const gasUsedSui = Number(netGasMist > 0n ? netGasMist : 0n) / 1e9;
       const gasCostUsd = gasUsedSui * suiPriceUsd;
 
+      const latencyMs = Date.now() - startTime;
+      telemetry.recordExecution({
+        opportunityId: opportunity.obligation.obligationId,
+        protocol: opportunity.protocol,
+        debtSymbol: opportunity.debtSymbol,
+        collateralSymbol: opportunity.collateralSymbol,
+        expectedProfitUsd: opportunity.expectedGrossProfitUsd,
+        actualProfitUsd: isSuccess ? netProfitUsd : 0,
+        gasCostSui: gasUsedSui,
+        success: isSuccess,
+        digest,
+        error: response.effects?.status?.error,
+        timestampMs: Date.now(),
+        latencies: {
+          evalDurationMs: 0,
+          ptbBuildDurationMs: 0,
+          simulationDurationMs: 0,
+          broadcastDurationMs: latencyMs,
+          totalCycleDurationMs: latencyMs,
+        },
+      });
+
       if (isSuccess) {
         logger.info(
-          { digest, latencyMs: Date.now() - startTime, netProfitUsd: netProfitUsd.toFixed(2) },
+          { digest, latencyMs, netProfitUsd: netProfitUsd.toFixed(2) },
           '🎉 LIQUIDATION EXECUTED SUCCESSFULLY ON-CHAIN!'
         );
       } else {
@@ -151,6 +174,25 @@ export class TransactionExecutor {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.error({ error: errorMsg }, 'Execution failed during transaction submission');
+
+      telemetry.recordExecution({
+        opportunityId: opportunity.obligation.obligationId,
+        protocol: opportunity.protocol,
+        debtSymbol: opportunity.debtSymbol,
+        collateralSymbol: opportunity.collateralSymbol,
+        expectedProfitUsd: opportunity.expectedGrossProfitUsd,
+        gasCostSui: 0,
+        success: false,
+        error: errorMsg,
+        timestampMs: Date.now(),
+        latencies: {
+          evalDurationMs: 0,
+          ptbBuildDurationMs: 0,
+          simulationDurationMs: 0,
+          broadcastDurationMs: Date.now() - startTime,
+          totalCycleDurationMs: Date.now() - startTime,
+        },
+      });
 
       return {
         digest: 'FAILED',

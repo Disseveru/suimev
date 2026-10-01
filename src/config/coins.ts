@@ -1,3 +1,4 @@
+import { normalizeStructTag as mystenNormalizeStructTag } from '@mysten/sui/utils';
 import { CoinMetadataConfig } from './types.js';
 
 /**
@@ -261,23 +262,19 @@ const COIN_BY_PYTH_ID_MAP = new Map<string, CoinMetadataConfig>();
 
 const normalizedTagCache = new Map<string, string>();
 
+/**
+ * Canonical struct tag normalizer using @mysten/sui/utils standard
+ */
 export function normalizeStructTag(type: string): string {
   if (!type) return '';
   const cached = normalizedTagCache.get(type);
   if (cached !== undefined) return cached;
 
-  const trimmed = type.trim();
-  let result = trimmed.toLowerCase();
-  const parts = trimmed.split('::');
-  if (parts.length === 3) {
-    let addr = parts[0].toLowerCase();
-    if (!addr.startsWith('0x')) addr = '0x' + addr;
-    try {
-      const cleanHex = addr.slice(2).replace(/^0+/, '') || '0';
-      result = `0x${cleanHex}::${parts[1]}::${parts[2]}`;
-    } catch {
-      result = `${addr}::${parts[1]}::${parts[2]}`;
-    }
+  let result: string;
+  try {
+    result = mystenNormalizeStructTag(type.trim());
+  } catch {
+    result = type.trim().toLowerCase();
   }
   normalizedTagCache.set(type, result);
   return result;
@@ -286,8 +283,12 @@ export function normalizeStructTag(type: string): string {
 for (const config of Object.values(COIN_CONFIGS)) {
   const normType = normalizeStructTag(config.coinType);
   COIN_BY_TYPE_MAP.set(normType, config);
-  // Also register un-stripped lowercase for direct matching
+  // Also register raw lowercase and short address variants for instant resolution
   COIN_BY_TYPE_MAP.set(config.coinType.toLowerCase(), config);
+  if (config.coinType.includes('0000000000000000000000000000000000000000000000000000000000000002::sui::SUI')) {
+    COIN_BY_TYPE_MAP.set('0x2::sui::sui', config);
+    COIN_BY_TYPE_MAP.set('0x2::sui::SUI', config);
+  }
   COIN_BY_SYMBOL_MAP.set(config.symbol.toUpperCase(), config);
   // Only register Pyth ID if it's a valid non-empty feed ID
   if (config.pythPriceFeedId) {
