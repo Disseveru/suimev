@@ -1,6 +1,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { LiquidationOpportunity, ExecutionResult } from '../config/types.js';
 import { rpcManager } from '../client/suiClient.js';
+import { gasManager } from '../client/gasManager.js';
 import { CONFIG } from '../config/index.js';
 import { logger } from '../ui/logger.js';
 import { priceCache } from '../oracles/priceCache.js';
@@ -101,6 +102,16 @@ export class TransactionExecutor {
         '🚀 BROADCASTING LIVE LIQUIDATION PTB TO SUI CONSENSUS...'
       );
 
+      // Zero-RPC Gas Object Optimization: Use locally tracked in-memory gas coin to eliminate implicit getCoins RPC round-trip
+      const cachedGas = gasManager.getGasPayment();
+      if (cachedGas) {
+        tx.setGasPayment([{
+          objectId: cachedGas.objectId,
+          version: cachedGas.version,
+          digest: cachedGas.digest,
+        }]);
+      }
+
       // 🏁 PARALLEL BROADCAST RACE — fire to ALL healthy RPCs simultaneously
       // Whichever endpoint confirms first wins; others are abandoned.
       // Saves 50–150ms vs sequential tryout on a congested block.
@@ -117,6 +128,9 @@ export class TransactionExecutor {
           });
         }
       );
+
+      // Surgically update in-memory gas coin version and digest from execution effects in 0ms
+      gasManager.updateFromExecutionEffects(response.effects);
 
       const digest = response.digest;
       const status = response.effects?.status?.status;
@@ -224,11 +238,13 @@ export class TransactionExecutor {
     // Allocate configured percentage of profit as a priority tip to validators
     const tipAllocationMist = BigInt(Math.floor(profitSui * CONFIG.priorityProfitShare * 1e9));
 
-    // Typical PTB uses ~4,000 computation gas units
-    const estimatedComputationUnits = 4000n;
-    const additionalGasPricePerUnit = tipAllocationMist / estimatedComputationUnits;
+    // Typical liquidation PTB uses ~3,500,000 computation gas units on Sui
+    // Computation cost (MIST) = units * (gasPrice / 1000)
+    // Therefore additionalGasPrice = (tipAllocationMist * 1000) / estimatedUnits
+    const estimatedComputationUnits = 3_500_000n;
+    const additionalGasPrice = (tipAllocationMist * 1000n) / estimatedComputationUnits;
 
-    const calculatedGasPrice = refGasPrice + additionalGasPricePerUnit;
+    const calculatedGasPrice = refGasPrice + additionalGasPrice;
     const minGasPrice = BigInt(Math.floor(Number(refGasPrice) * baseMultiplier));
     const maxGasPrice = BigInt(Math.floor(Number(refGasPrice) * maxMultiplier));
 
