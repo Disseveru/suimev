@@ -20,16 +20,17 @@ export class TransactionExecutor {
     const startTime = Date.now();
     const suiPriceUsd = priceCache.getPriceUsd('0x2::sui::SUI') || 2.50;
     // Safety Gate: Pyth Price Freshness Validation
+    // Per AGENTS.md §4.3 & §9.3, live broadcast mandates freshness <= 10s (allow 60s in dry-run mode for local tests)
     const nowMs = Date.now();
-    const MAX_AGE_MS = 60000;
+    const MAX_AGE_MS = CONFIG.dryRun ? 60000 : 10000;
     const debtPrice = priceCache.getPriceBySymbol(opportunity.debtSymbol);
     const colPrice = priceCache.getPriceBySymbol(opportunity.collateralSymbol);
     
     if (debtPrice && (nowMs - debtPrice.lastUpdatedMs > MAX_AGE_MS)) {
-      throw new Error(`Oracle price for ${opportunity.debtSymbol} is older than ${MAX_AGE_MS}ms. Aborting.`);
+      throw new Error(`Oracle price for ${opportunity.debtSymbol} is older than ${MAX_AGE_MS}ms (${((nowMs - debtPrice.lastUpdatedMs)/1000).toFixed(1)}s). Aborting per AGENTS.md freshness rules.`);
     }
     if (colPrice && (nowMs - colPrice.lastUpdatedMs > MAX_AGE_MS)) {
-      throw new Error(`Oracle price for ${opportunity.collateralSymbol} is older than ${MAX_AGE_MS}ms. Aborting.`);
+      throw new Error(`Oracle price for ${opportunity.collateralSymbol} is older than ${MAX_AGE_MS}ms (${((nowMs - colPrice.lastUpdatedMs)/1000).toFixed(1)}s). Aborting per AGENTS.md freshness rules.`);
     }
 
     // Safety Gate: Net Profit Validation (Accounts for flash loan, DEX swap, and gas costs)
@@ -85,11 +86,12 @@ export class TransactionExecutor {
 
     // LIVE EXECUTION PATH
     try {
-      // Verify operator has sufficient SUI balance for gas budget
+      // Verify operator has sufficient SUI balance for gas budget (at least 2x budget per AGENTS.md §4.3)
+      const minRequiredMist = BigInt(CONFIG.gasBudget) * 2n;
       const gasCheck = await this.checkOperatorGasBalance();
       if (!gasCheck.isSufficient) {
         throw new Error(
-          `Operator wallet ${CONFIG.operatorAddress} has insufficient SUI (${gasCheck.balanceSui.toFixed(4)} SUI). Required gas budget: ${(Number(CONFIG.gasBudget) / 1e9).toFixed(4)} SUI`
+          `Operator wallet ${CONFIG.operatorAddress} has insufficient SUI (${gasCheck.balanceSui.toFixed(4)} SUI). Required gas reserve: ${(Number(minRequiredMist) / 1e9).toFixed(4)} SUI (2x budget per AGENTS.md §4.3)`
         );
       }
 
@@ -227,12 +229,13 @@ export class TransactionExecutor {
     balanceSui: number;
     isSufficient: boolean;
   }> {
+    const minRequiredMist = BigInt(CONFIG.gasBudget) * 2n;
     const now = Date.now();
     if (!forceRefresh && this.cachedGasBalance && now - this.cachedGasBalance.lastCheckedMs < 5_000) {
       return {
         balanceMist: this.cachedGasBalance.balanceMist,
         balanceSui: this.cachedGasBalance.balanceSui,
-        isSufficient: this.cachedGasBalance.balanceMist >= BigInt(CONFIG.gasBudget),
+        isSufficient: this.cachedGasBalance.balanceMist >= minRequiredMist,
       };
     }
 
@@ -247,7 +250,7 @@ export class TransactionExecutor {
       return {
         balanceMist,
         balanceSui,
-        isSufficient: balanceMist >= BigInt(CONFIG.gasBudget),
+        isSufficient: balanceMist >= minRequiredMist,
       };
     } catch {
       return { balanceMist: 0n, balanceSui: 0, isSufficient: false };

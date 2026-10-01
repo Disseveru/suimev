@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "audit:types": "tsc --noEmit",
     "start": "tsx src/index.ts",
     "status": "tsx src/cli/index.ts status",
     "dev": "tsx watch src/index.ts",

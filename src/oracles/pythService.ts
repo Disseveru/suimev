@@ -158,7 +158,9 @@ export class PythPriceService {
           priceCache.updatePriceForSymbol(symbol, rawPrice, expo, publishTime);
           const cfg = COIN_CONFIGS[symbol];
           if (cfg) {
-            for (const listener of this.updateListeners) {
+            // SNAPSHOT: safe to mutate after loop per AGENTS.md Rule 5.2
+            const listeners = Array.from(this.updateListeners);
+            for (const listener of listeners) {
               listener(cfg.pythPriceFeedId, normPrice);
             }
           }
@@ -230,7 +232,9 @@ export class PythPriceService {
               const cfg = getCoinConfigByPythId(feedId);
               if (cfg) {
                 const normPrice = Number(priceInfo.price) * Math.pow(10, priceInfo.expo);
-                for (const listener of this.updateListeners) {
+                // SNAPSHOT: safe to mutate after loop per AGENTS.md Rule 5.2
+                const listeners = Array.from(this.updateListeners);
+                for (const listener of listeners) {
                   listener(feedId, normPrice);
                 }
               }

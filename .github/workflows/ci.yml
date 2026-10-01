@@ -31,4 +31,5 @@ jobs:
       run: |
         cd evm-mev
         npm install
+        npm run audit:types
         npm test

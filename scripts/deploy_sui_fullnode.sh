@@ -126,15 +126,20 @@ echo -e "${CYAN}Querying Staketab RocksDB latest pruned mainnet snapshot...${NC}
 # Stop any running sui-node service before database restoration
 systemctl stop sui-node.service 2>/dev/null || true
 
-SNAPSHOT_URL="https://sui-mainnet-snapshot.staketab.org/sui-mainnet-snapshot.tar.lz4"
+# Parameterize SNAPSHOT_URL: allow env var or $1 argument override, default to Staketab snapshot mirror
+SNAPSHOT_URL="${SNAPSHOT_URL:-${1:-"https://sui-mainnet-snapshot.staketab.org/sui-mainnet-snapshot.tar.lz4"}}"
+echo -e "Snapshot URL: ${CYAN}${SNAPSHOT_URL}${NC}"
 
-if curl -s --head "${SNAPSHOT_URL}" | grep "200 OK" > /dev/null; then
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L --head "${SNAPSHOT_URL}" 2>/dev/null || echo "000")
+if [[ "${HTTP_STATUS}" == "200" ]]; then
     echo "Downloading and extracting snapshot directly into ${SUI_DB_DIR} via streaming lz4..."
-    curl -L "${SNAPSHOT_URL}" | pv | lz4 -d | tar -xC "${SUI_DB_DIR}"
+    curl -f -L "${SNAPSHOT_URL}" | pv | lz4 -d | tar -xC "${SUI_DB_DIR}"
     chown -R "${SUI_USER}:${SUI_USER}" "${SUI_DB_DIR}"
     echo -e "${GREEN}✓ Snapshot extraction complete! Node is synced to near-live tip.${NC}"
 else
-    echo -e "${YELLOW}[NOTICE] Staketab direct mirror busy or rotating snapshot. Node will start with fast peer-to-peer sync.${NC}"
+    echo -e "${YELLOW}[NOTICE] Snapshot mirror returned HTTP ${HTTP_STATUS} (rotating or unreachable).${NC}"
+    echo -e "${YELLOW}To provide a custom snapshot mirror, run: SNAPSHOT_URL=\"<url>\" ./deploy_sui_fullnode.sh${NC}"
+    echo -e "${YELLOW}Node will proceed and start with standard high-speed peer-to-peer sync.${NC}"
 fi
 
 # 7. Configure Systemd Service

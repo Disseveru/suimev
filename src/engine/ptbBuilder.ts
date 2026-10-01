@@ -35,6 +35,12 @@ export class ZeroCapitalPtbBuilder {
     if (opportunity.obligation.healthFactor >= 1.0) {
       throw new Error(`Zero-capital solvency guard triggered: Borrower HF ${opportunity.obligation.healthFactor} >= 1.0 (Safe)`);
     }
+    if (opportunity.obligation.totalCollateralUsd <= 0 || opportunity.collateralToReceive <= 0n) {
+      throw new Error(`Zero-capital bad debt guard triggered: Borrower has zero collateral. Aborting.`);
+    }
+    if (opportunity.obligation.totalDebtUsd < 0.01 || opportunity.debtAmountToRepay <= 0n) {
+      throw new Error(`Zero-capital dust guard triggered: Debt amount below $0.01 threshold. Aborting.`);
+    }
 
     const tx = existingTx ?? new Transaction();
     tx.setSender(CONFIG.operatorAddress);

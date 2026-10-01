@@ -1,6 +1,7 @@
 import * as navi from '@naviprotocol/lending';
 import { suiClient } from '../../client/suiClient.js';
 import { COIN_CONFIGS, getCoinConfigByType, normalizeStructTag } from '../../config/coins.js';
+import { NAVI_CONFIG } from '../../config/constants.js';
 import { logger } from '../../ui/logger.js';
 
 export interface NaviPoolInfo {
@@ -39,6 +40,36 @@ export class NaviProtocol {
 
     try {
       logger.info('Initializing NAVI Protocol pool registry...');
+
+      // Dynamically synchronize live protocol package and object IDs from official SDK
+      try {
+        const liveConfig = await (navi as any).getConfig();
+        if (liveConfig?.package) {
+          NAVI_CONFIG.packageId = liveConfig.package;
+        }
+        if (liveConfig?.storage) {
+          NAVI_CONFIG.storage = liveConfig.storage;
+        }
+        if (liveConfig?.incentiveV2) {
+          NAVI_CONFIG.incentiveV2 = liveConfig.incentiveV2;
+        }
+        if (liveConfig?.incentiveV3) {
+          NAVI_CONFIG.incentiveV3 = liveConfig.incentiveV3;
+        }
+        if (liveConfig?.priceOracle) {
+          NAVI_CONFIG.priceOracle = liveConfig.priceOracle;
+        }
+        if (liveConfig?.flashloanConfig) {
+          NAVI_CONFIG.flashloanConfig = liveConfig.flashloanConfig;
+        }
+        if (liveConfig?.flashloanSupportedAssets) {
+          NAVI_CONFIG.flashloanSupportedAssets = liveConfig.flashloanSupportedAssets;
+        }
+        logger.info({ packageId: NAVI_CONFIG.packageId }, 'Dynamically synchronized NAVI protocol configuration');
+      } catch (cfgErr) {
+        logger.warn({ error: cfgErr }, 'Failed to fetch dynamic NAVI config from SDK, using static fallback configuration');
+      }
+
       const pools = await navi.getPools();
 
       if (pools && Array.isArray(pools)) {
