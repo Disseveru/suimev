@@ -16,6 +16,15 @@ export const NAVI_CONFIG = {
   flashloanSupportedAssets: '0x6c8fc404b4f22443302bbcc50ee593e5b898cc1e6755d72af0a6aab5a7a6f6d3',
 };
 
+// Official NAVI Open API Endpoints (per NAVI developer docs)
+export const NAVI_API_ENDPOINTS = {
+  package: 'https://open-api.naviprotocol.io/api/package',
+  pools: 'https://open-api.naviprotocol.io/api/navi/pools',
+  contractConfigs: 'https://open-api.naviprotocol.io/api/navi/contract/configs',
+  flashloan: 'https://open-api.naviprotocol.io/api/navi/flashloan',
+  oracle: 'https://open-api.naviprotocol.io/api/navi/oracle',
+} as const;
+
 // Scallop Protocol Mainnet Configuration
 export const SCALLOP_CONFIG = {
   addressId: '695fcdc084f790c04eb068dc',

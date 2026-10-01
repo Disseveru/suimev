@@ -4,6 +4,7 @@ import { priceCache } from './priceCache.js';
 import { CONFIG } from '../config/index.js';
 import { CetusRouter } from '../protocols/dex/cetusRouter.js';
 import { DeepBookRouter } from '../protocols/dex/deepbookRouter.js';
+import { naviProtocol } from '../protocols/navi/naviProtocol.js';
 
 /**
  * Health Factor & Liquidation Math Engine
@@ -116,9 +117,10 @@ export class HealthFactorEngine {
         const maxRepayAmount = (targetDebt.amount * BigInt(Math.floor(effectiveCloseFactor * 10000))) / 10000n;
         if (maxRepayAmount <= 0n) continue;
 
-        // Liquidation bonus: usually 5% - 8% based on collateral token
+        // Liquidation bonus: dynamically resolve from NAVI pool registry (e.g. 10% for SUI, 8% for USDC) or coin config
+        const naviPool = obligation.protocol === 'navi' ? naviProtocol.getPoolByCoinType(targetCollateral.coinType) : undefined;
         const colCfg = getCoinConfigByType(targetCollateral.coinType);
-        const liquidationBonus = colCfg?.liquidationBonus ?? 0.05;
+        const liquidationBonus = naviPool?.liquidationBonus ?? colCfg?.liquidationBonus ?? 0.05;
 
         // Calculate theoretical collateral seized for maxRepayAmount
         const normMaxRepay = Number(maxRepayAmount) / Math.pow(10, targetDebt.decimals);

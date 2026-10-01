@@ -50,10 +50,10 @@ export class ZeroCapitalPtbBuilder {
     const collateralCoinType = opportunity.collateralCoinType;
     const debtAmountToRepay = opportunity.debtAmountToRepay;
 
-    // Flash loan fees: NAVI is 5 bps (0.05%), Scallop is 0 bps (verified on-chain)
-    const flashLoanFeeBps = opportunity.protocol === 'navi' ? 5n : 0n;
-    const estimatedFlashLoanFee = (debtAmountToRepay * flashLoanFeeBps) / 10000n;
-    const totalDebtNeededToRepayLoan = debtAmountToRepay + estimatedFlashLoanFee;
+    // Flash loan fees: NAVI and Scallop both charge 0 bps (verified via NAVI OpenAPI /api/navi/flashloan & Scallop contracts)
+    const flashLoanFeeBps = 0n;
+    const estimatedFlashLoanFee = 0n;
+    const totalDebtNeededToRepayLoan = debtAmountToRepay;
 
     let loanCoin: TransactionObjectArgument;
     let receipt: TransactionObjectArgument;
