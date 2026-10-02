@@ -104,7 +104,7 @@ export class ScallopIndexer {
     this.knownObligationIds.add(id);
   }
 
-  public async discoverObligationsFromHistory(maxPages: number = 20): Promise<void> {
+  public async discoverObligationsFromHistory(maxPages: number = 200): Promise<void> {
     try {
       logger.info('Querying historical Scallop events with cursor pagination across open_obligation, borrow, and deposit_collateral...');
       

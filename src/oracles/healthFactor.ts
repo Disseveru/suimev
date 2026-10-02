@@ -25,7 +25,7 @@ export class HealthFactorEngine {
     };
     const isSuiLst = (s: string) => {
       const sym = s.toUpperCase();
-      return sym === 'SUI' || sym === 'VSUI' || sym === 'HASUI' || sym === 'AFSUI';
+      return sym === 'SUI' || sym === 'VSUI' || sym === 'HASUI' || sym === 'AFSUI' || sym === 'CERT';
     };
 
     const allColStable = obligation.collaterals.length > 0 && obligation.collaterals.every(c => isStable(c.symbol));
@@ -140,7 +140,9 @@ export class HealthFactorEngine {
           const normColSeize = Number(actualCollateralToReceive) / Math.pow(10, targetCollateral.decimals);
           const colSeizeUsd = normColSeize * colPrice;
           const matchedDebtUsd = colSeizeUsd / (1 + liquidationBonus);
-          const matchedDebtUnits = Math.floor((matchedDebtUsd / debtPrice) * Math.pow(10, targetDebt.decimals));
+          // Apply a 0.9999 safety buffer to prevent MoveAbort 1606 (InsufficientCollateral)
+          // due to off-chain vs on-chain oracle price mismatches or floating point inaccuracies.
+          const matchedDebtUnits = Math.floor((matchedDebtUsd / debtPrice) * 0.9999 * Math.pow(10, targetDebt.decimals));
           actualRepayAmount = BigInt(matchedDebtUnits);
         }
 

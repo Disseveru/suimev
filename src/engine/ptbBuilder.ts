@@ -372,14 +372,44 @@ export class ZeroCapitalPtbBuilder {
     if (opportunity.protocol === 'navi') {
       const tx = new Transaction();
       try {
+        const feedIds = [
+          ...opportunity.obligation.collaterals.map(c => getCoinConfigByType(c.coinType)?.pythPriceFeedId),
+          ...opportunity.obligation.debts.map(d => getCoinConfigByType(d.coinType)?.pythPriceFeedId),
+          getCoinConfigByType(opportunity.debtCoinType)?.pythPriceFeedId,
+          getCoinConfigByType(opportunity.collateralCoinType)?.pythPriceFeedId,
+        ].filter(Boolean) as string[];
+
+        const uniqueFeedIds = Array.from(new Set(feedIds));
+        
+        if (uniqueFeedIds.length > 0) {
+          const { SuiPythClient } = await import('@pythnetwork/pyth-sui-js');
+          const { pythService } = await import('../oracles/pythService.js');
+          const { rpcManager } = await import('../client/suiClient.js');
+
+          const pythClient = new SuiPythClient(
+            (rpcManager.getClient() as any),
+            '0x1f9310238ee9298fb703c3419030b35b22bb1cc37113e3bb5007c99aec79e5b8', // Mainnet Pyth State ID
+            '0x31358d198147da50db32eda2562951d53cd27f59d66ceda83b06900fdfbbf528'  // Mainnet Wormhole State ID
+          );
+
+          // Get binary VAA payloads using the local service
+          const vaaData = await pythService.getPriceUpdateDataForPTB(uniqueFeedIds);
+
+          if (vaaData.length > 0) {
+             const vaaBuffers = vaaData.map((d: string) => Buffer.from(d, 'base64'));
+             await pythClient.updatePriceFeeds(tx, vaaBuffers, uniqueFeedIds);
+          }
+        }
+
+        // Must still call Navi's xOracle update to pull the fresh Pyth price into Navi's state
         const poolList = await (navi as any).getPools();
         await (navi as any).updateOraclePriceBeforeUserOperationPTB(
           tx,
           opportunity.obligation.ownerAddress,
           poolList
         );
-      } catch (err) {
-        // Fall back if offline or in mock test environment
+      } catch (err: any) {
+        logger.error({ error: err?.message, stack: err?.stack }, 'Failed to fetch and inject Pyth VAAs for NAVI PTB');
       }
       return this.buildLiquidationPTB(opportunity, tx);
     }

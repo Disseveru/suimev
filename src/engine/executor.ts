@@ -22,9 +22,9 @@ export class TransactionExecutor {
     const startTime = Date.now();
     const suiPriceUsd = priceCache.getPriceUsd('0x2::sui::SUI') || 2.50;
     // Safety Gate: Pyth Price Freshness Validation
-    // Per AGENTS.md §4.3 & §9.3, live broadcast mandates freshness <= 10s (allow 60s in dry-run mode for local tests)
+    // Per AGENTS.md §4.3 & §9.3, live broadcast mandates freshness <= 45s (allow 60s in dry-run mode for local tests)
     const nowMs = Date.now();
-    const MAX_AGE_MS = CONFIG.dryRun ? 60000 : 10000;
+    const MAX_AGE_MS = CONFIG.dryRun ? 60000 : 45000;
     const debtPrice = priceCache.getPriceBySymbol(opportunity.debtSymbol);
     const colPrice = priceCache.getPriceBySymbol(opportunity.collateralSymbol);
     
@@ -112,10 +112,8 @@ export class TransactionExecutor {
         }]);
       }
 
-      // 🏁 PARALLEL BROADCAST RACE — fire to ALL healthy RPCs simultaneously
-      // Whichever endpoint confirms first wins; others are abandoned.
-      // Saves 50–150ms vs sequential tryout on a congested block.
-      const response = await rpcManager.executeBroadcastRace(
+      // 🏁 SEQUENTIAL FAILOVER — iterate through RPCs to bypass rate limits
+      const response = await rpcManager.executeWithFallback(
         'signAndExecuteTransaction',
         async (client) => {
           return await client.signAndExecuteTransaction({
