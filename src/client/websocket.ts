@@ -106,7 +106,9 @@ export class SuiWebSocketClient {
 
   private resubscribeAll(): void {
     this.serverSubIdToHandler.clear();
-    for (const [id, sub] of this.subscriptions.entries()) {
+    // SNAPSHOT: safe to mutate after loop per AGENTS.md Rule 5.2
+    const entries = Array.from(this.subscriptions.entries());
+    for (const [id, sub] of entries) {
       this.sendSubscription(id, sub.filter);
     }
   }
@@ -132,7 +134,9 @@ export class SuiWebSocketClient {
         if (specificHandler) {
           specificHandler(eventData);
         } else {
-          for (const sub of this.subscriptions.values()) {
+          // SNAPSHOT: safe to mutate after loop per AGENTS.md Rule 5.2
+          const subs = Array.from(this.subscriptions.values());
+          for (const sub of subs) {
             sub.handler(eventData);
           }
         }

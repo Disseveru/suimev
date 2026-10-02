@@ -4,6 +4,7 @@ import { priceCache } from './priceCache.js';
 import { CONFIG } from '../config/index.js';
 import { CetusRouter } from '../protocols/dex/cetusRouter.js';
 import { DeepBookRouter } from '../protocols/dex/deepbookRouter.js';
+import { naviProtocol } from '../protocols/navi/naviProtocol.js';
 
 /**
  * Health Factor & Liquidation Math Engine
@@ -24,7 +25,7 @@ export class HealthFactorEngine {
     };
     const isSuiLst = (s: string) => {
       const sym = s.toUpperCase();
-      return sym === 'SUI' || sym === 'VSUI' || sym === 'HASUI' || sym === 'AFSUI';
+      return sym === 'SUI' || sym === 'VSUI' || sym === 'HASUI' || sym === 'AFSUI' || sym === 'CERT';
     };
 
     const allColStable = obligation.collaterals.length > 0 && obligation.collaterals.every(c => isStable(c.symbol));
@@ -74,46 +75,54 @@ export class HealthFactorEngine {
 
   /**
    * Find the most profitable liquidation pair (debt to repay vs collateral to seize)
+   * Enforces protocol-specific close factor: 35% on NAVI per official docs, 50% on Scallop.
    */
   public static findBestLiquidationOpportunity(
     obligation: ObligationState,
-    closeFactor: number = CONFIG.liquidationCloseFactor
+    closeFactor?: number
   ): LiquidationOpportunity | null {
     if (!obligation.isLiquidatable || obligation.debts.length === 0 || obligation.collaterals.length === 0) {
       return null;
     }
+
+    const effectiveCloseFactor = closeFactor ?? (
+      obligation.protocol === 'navi' ? CONFIG.naviCloseFactor : CONFIG.liquidationCloseFactor
+    );
 
     let bestOpportunity: LiquidationOpportunity | null = null;
 
     // Search across all debt and collateral combinations to find the highest-profit valid pair
     for (const targetDebt of obligation.debts) {
       for (const targetCollateral of obligation.collaterals) {
-        // Check DEX route availability on Cetus and DeepBook
+        // Check DEX route availability on Cetus, DeepBook, or Astros Aggregator
         const hasCetusRoute = CetusRouter.hasPool(targetCollateral.coinType, targetDebt.coinType);
         const hasDeepBookRoute = DeepBookRouter.hasPool(targetCollateral.coinType, targetDebt.coinType);
         const isSameAsset = targetCollateral.coinType.toLowerCase() === targetDebt.coinType.toLowerCase();
 
-        if (!hasCetusRoute && !hasDeepBookRoute && !isSameAsset) continue;
-
-        // Determine best DEX
-        let selectedDex: 'cetus' | 'deepbook' = 'cetus';
-        if (CONFIG.preferredDex === 'deepbook') {
-          selectedDex = hasDeepBookRoute ? 'deepbook' : 'cetus';
+        // Determine best DEX (Astros Aggregator acts as universal multi-hop aggregator)
+        let selectedDex: 'cetus' | 'deepbook' | 'astros' = 'cetus';
+        if (CONFIG.preferredDex === 'deepbook' && hasDeepBookRoute) {
+          selectedDex = 'deepbook';
+        } else if (hasCetusRoute) {
+          selectedDex = 'cetus';
+        } else if (hasDeepBookRoute) {
+          selectedDex = 'deepbook';
         } else {
-          selectedDex = hasCetusRoute ? 'cetus' : 'deepbook';
+          selectedDex = 'astros';
         }
 
         const debtPrice = priceCache.getPriceUsd(targetDebt.coinType);
         const colPrice = priceCache.getPriceUsd(targetCollateral.coinType);
         if (debtPrice <= 0 || colPrice <= 0) continue;
 
-        // Compute maximum repayable debt based on close factor (e.g. 50% max)
-        const maxRepayAmount = (targetDebt.amount * BigInt(Math.floor(closeFactor * 10000))) / 10000n;
+        // Compute maximum repayable debt based on protocol close factor (35% for NAVI, 50% for Scallop)
+        const maxRepayAmount = (targetDebt.amount * BigInt(Math.floor(effectiveCloseFactor * 10000))) / 10000n;
         if (maxRepayAmount <= 0n) continue;
 
-        // Liquidation bonus: usually 5% - 8% based on collateral token
+        // Liquidation bonus: dynamically resolve from NAVI pool registry (e.g. 10% for SUI, 8% for USDC) or coin config
+        const naviPool = obligation.protocol === 'navi' ? naviProtocol.getPoolByCoinType(targetCollateral.coinType) : undefined;
         const colCfg = getCoinConfigByType(targetCollateral.coinType);
-        const liquidationBonus = colCfg?.liquidationBonus ?? 0.05;
+        const liquidationBonus = naviPool?.liquidationBonus ?? colCfg?.liquidationBonus ?? 0.05;
 
         // Calculate theoretical collateral seized for maxRepayAmount
         const normMaxRepay = Number(maxRepayAmount) / Math.pow(10, targetDebt.decimals);
@@ -131,7 +140,9 @@ export class HealthFactorEngine {
           const normColSeize = Number(actualCollateralToReceive) / Math.pow(10, targetCollateral.decimals);
           const colSeizeUsd = normColSeize * colPrice;
           const matchedDebtUsd = colSeizeUsd / (1 + liquidationBonus);
-          const matchedDebtUnits = Math.floor((matchedDebtUsd / debtPrice) * Math.pow(10, targetDebt.decimals));
+          // Apply a 0.9999 safety buffer to prevent MoveAbort 1606 (InsufficientCollateral)
+          // due to off-chain vs on-chain oracle price mismatches or floating point inaccuracies.
+          const matchedDebtUnits = Math.floor((matchedDebtUsd / debtPrice) * 0.9999 * Math.pow(10, targetDebt.decimals));
           actualRepayAmount = BigInt(matchedDebtUnits);
         }
 

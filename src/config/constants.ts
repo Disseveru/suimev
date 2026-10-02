@@ -16,6 +16,15 @@ export const NAVI_CONFIG = {
   flashloanSupportedAssets: '0x6c8fc404b4f22443302bbcc50ee593e5b898cc1e6755d72af0a6aab5a7a6f6d3',
 };
 
+// Official NAVI Open API Endpoints (per NAVI developer docs)
+export const NAVI_API_ENDPOINTS = {
+  package: 'https://open-api.naviprotocol.io/api/package',
+  pools: 'https://open-api.naviprotocol.io/api/navi/pools',
+  contractConfigs: 'https://open-api.naviprotocol.io/api/navi/contract/configs',
+  flashloan: 'https://open-api.naviprotocol.io/api/navi/flashloan',
+  oracle: 'https://open-api.naviprotocol.io/api/navi/oracle',
+} as const;
+
 // Scallop Protocol Mainnet Configuration
 export const SCALLOP_CONFIG = {
   addressId: '695fcdc084f790c04eb068dc',
@@ -32,6 +41,41 @@ export const SCALLOP_CONFIG = {
   vescaSubsTable: '0x064ae57829a1224b05d209da729ab77647ab70a21a82a933a5070639d15af490',
   vescaSubsWhitelist: '0xaa0a920bf20b43aa1a8c19cf39df457a835ce98b2820a0d1090420a7e5ff66fe',
 };
+
+// Authoritative Scallop mainnet shared object initial versions
+// IMPORTANT: If Scallop migrates objects, these versions must be updated.
+// These are used for zero-RPC PTB construction latency optimization.
+export const SCALLOP_SHARED_VERSIONS: Record<string, number> = {
+  [SCALLOP_CONFIG.version]: 7765848,
+  [SCALLOP_CONFIG.market]: 7765848,
+  [SCALLOP_CONFIG.coinDecimalsRegistry]: 7765847,
+  [SCALLOP_CONFIG.xOracle]: 7765842,
+  [SCALLOP_CONFIG.borrowIncentivePools]: 81234462,
+  [SCALLOP_CONFIG.borrowIncentiveAccounts]: 81234462,
+};
+
+/**
+ * Validates the hardcoded shared object initial versions against on-chain state.
+ * Expected to be called during startup to ensure no silent failures if objects migrate.
+ */
+export async function validateSharedVersions(client: any): Promise<void> {
+  const objects = Object.keys(SCALLOP_SHARED_VERSIONS);
+  
+  const res = await client.multiGetObjects({
+    ids: objects,
+    options: { showOwner: true }
+  });
+  
+  for (const obj of res) {
+    if (obj.data?.owner && typeof obj.data.owner === 'object' && 'Shared' in obj.data.owner) {
+      const initial = obj.data.owner.Shared.initial_shared_version;
+      const expected = SCALLOP_SHARED_VERSIONS[obj.data.objectId];
+      if (initial && expected && Number(initial) !== expected) {
+        throw new Error(`Shared object initial version mismatch for ${obj.data.objectId}. Expected ${expected}, got ${initial}`);
+      }
+    }
+  }
+}
 
 // Cetus CLMM Mainnet Configuration
 export const CETUS_CONFIG = {

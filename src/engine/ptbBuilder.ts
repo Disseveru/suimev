@@ -8,6 +8,7 @@ import { ScallopPtbBuilder } from '../protocols/scallop/scallopPtb.js';
 import { scallopProtocol } from '../protocols/scallop/scallopProtocol.js';
 import { CetusRouter } from '../protocols/dex/cetusRouter.js';
 import { DeepBookRouter } from '../protocols/dex/deepbookRouter.js';
+import { AstrosRouter } from '../protocols/dex/astrosRouter.js';
 import * as navi from '@naviprotocol/lending';
 import { logger } from '../ui/logger.js';
 
@@ -32,6 +33,16 @@ export class ZeroCapitalPtbBuilder {
     opportunity: LiquidationOpportunity,
     existingTx?: Transaction
   ): BuiltLiquidationPTB {
+    if (opportunity.obligation.healthFactor >= 1.0) {
+      throw new Error(`Zero-capital solvency guard triggered: Borrower HF ${opportunity.obligation.healthFactor} >= 1.0 (Safe)`);
+    }
+    if (opportunity.obligation.totalCollateralUsd <= 0 || opportunity.collateralToReceive <= 0n) {
+      throw new Error(`Zero-capital bad debt guard triggered: Borrower has zero collateral. Aborting.`);
+    }
+    if (opportunity.obligation.totalDebtUsd < 0.01 || opportunity.debtAmountToRepay <= 0n) {
+      throw new Error(`Zero-capital dust guard triggered: Debt amount below $0.01 threshold. Aborting.`);
+    }
+
     const tx = existingTx ?? new Transaction();
     tx.setSender(CONFIG.operatorAddress);
     tx.setGasBudget(BigInt(CONFIG.gasBudget));
@@ -40,10 +51,10 @@ export class ZeroCapitalPtbBuilder {
     const collateralCoinType = opportunity.collateralCoinType;
     const debtAmountToRepay = opportunity.debtAmountToRepay;
 
-    // Flash loan fees: NAVI is 5 bps (0.05%), Scallop is 0 bps (verified on-chain)
-    const flashLoanFeeBps = opportunity.protocol === 'navi' ? 5n : 0n;
-    const estimatedFlashLoanFee = (debtAmountToRepay * flashLoanFeeBps) / 10000n;
-    const totalDebtNeededToRepayLoan = debtAmountToRepay + estimatedFlashLoanFee;
+    // Flash loan fees: NAVI and Scallop both charge 0 bps (verified via NAVI OpenAPI /api/navi/flashloan & Scallop contracts)
+    const flashLoanFeeBps = 0n;
+    const estimatedFlashLoanFee = 0n;
+    const totalDebtNeededToRepayLoan = debtAmountToRepay;
 
     let loanCoin: TransactionObjectArgument;
     let receipt: TransactionObjectArgument;
@@ -293,13 +304,16 @@ export class ZeroCapitalPtbBuilder {
         // 1. Update Pyth asset prices in xOracle for all assets in the target obligation
         // Note: Scallop requires fresh prices for ALL collateral and debt assets in the obligation
         // to evaluate health factor during force_unstake_unhealthy and liquidate without abort 1025.
+        const oblId = opportunity.obligation.obligationId;
+        const dynamicCoinNames = await scallopProtocol.getObligationCoinNames(oblId);
+        const exactCoinNames = new Set<string>(dynamicCoinNames);
+
         const allTypes = [
           ...opportunity.obligation.collaterals.filter(c => c.amount > 0n).map(c => c.coinType),
           ...opportunity.obligation.debts.filter(d => d.amount > 0n).map(d => d.coinType),
           opportunity.debtCoinType,
           opportunity.collateralCoinType,
         ];
-        const exactCoinNames = new Set<string>();
         for (const coinType of allTypes) {
           try {
             const parsedName = (builder as any).utils?.parseCoinNameFromType?.(coinType);
@@ -318,7 +332,6 @@ export class ZeroCapitalPtbBuilder {
         }
 
         // 2. Check obligation lock state — use TTL cache to skip extra RPC on retries
-        const oblId = opportunity.obligation.obligationId;
         const cached = this.lockCache.get(oblId);
         const now = Date.now();
         let isLocked: boolean;
@@ -331,6 +344,12 @@ export class ZeroCapitalPtbBuilder {
         }
 
         if (isLocked) {
+          // AGENTS.md §9.2 Abort 2 Guard: Calling force_unstake_unhealthy on an obligation with
+          // on-chain riskLevel < 1.0 aborts with Move error 2 (obligation_is_healthy).
+          const riskInfo = await scallopProtocol.getOnChainObligationRisk(oblId);
+          if (!riskInfo.isLiquidatable) {
+            throw new Error(`Abort 2 Guard: Scallop on-chain riskLevel ${riskInfo.riskLevel.toFixed(4)} < 1.0 (account is healthy on-chain per AGENTS.md §9.2)`);
+          }
           ScallopPtbBuilder.addForceUnstakeUnhealthy(scallopTx.txBlock, oblId);
           // Invalidate cache once we've added the unlock instruction — recheck next time
           this.lockCache.delete(oblId);
@@ -353,14 +372,44 @@ export class ZeroCapitalPtbBuilder {
     if (opportunity.protocol === 'navi') {
       const tx = new Transaction();
       try {
+        const feedIds = [
+          ...opportunity.obligation.collaterals.map(c => getCoinConfigByType(c.coinType)?.pythPriceFeedId),
+          ...opportunity.obligation.debts.map(d => getCoinConfigByType(d.coinType)?.pythPriceFeedId),
+          getCoinConfigByType(opportunity.debtCoinType)?.pythPriceFeedId,
+          getCoinConfigByType(opportunity.collateralCoinType)?.pythPriceFeedId,
+        ].filter(Boolean) as string[];
+
+        const uniqueFeedIds = Array.from(new Set(feedIds));
+        
+        if (uniqueFeedIds.length > 0) {
+          const { SuiPythClient } = await import('@pythnetwork/pyth-sui-js');
+          const { pythService } = await import('../oracles/pythService.js');
+          const { rpcManager } = await import('../client/suiClient.js');
+
+          const pythClient = new SuiPythClient(
+            (rpcManager.getClient() as any),
+            '0x1f9310238ee9298fb703c3419030b35b22bb1cc37113e3bb5007c99aec79e5b8', // Mainnet Pyth State ID
+            '0x31358d198147da50db32eda2562951d53cd27f59d66ceda83b06900fdfbbf528'  // Mainnet Wormhole State ID
+          );
+
+          // Get binary VAA payloads using the local service
+          const vaaData = await pythService.getPriceUpdateDataForPTB(uniqueFeedIds);
+
+          if (vaaData.length > 0) {
+             const vaaBuffers = vaaData.map((d: string) => Buffer.from(d, 'base64'));
+             await pythClient.updatePriceFeeds(tx, vaaBuffers, uniqueFeedIds);
+          }
+        }
+
+        // Must still call Navi's xOracle update to pull the fresh Pyth price into Navi's state
         const poolList = await (navi as any).getPools();
         await (navi as any).updateOraclePriceBeforeUserOperationPTB(
           tx,
           opportunity.obligation.ownerAddress,
           poolList
         );
-      } catch (err) {
-        // Fall back if offline or in mock test environment
+      } catch (err: any) {
+        logger.error({ error: err?.message, stack: err?.stack }, 'Failed to fetch and inject Pyth VAAs for NAVI PTB');
       }
       return this.buildLiquidationPTB(opportunity, tx);
     }

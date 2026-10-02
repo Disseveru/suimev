@@ -81,7 +81,15 @@ export class SuiClientManager {
         endpoint.failures++;
         endpoint.lastLatencyMs = Date.now() - startMs;
 
-        const isRateLimit = String(err).includes('429') || String(err).includes('Too Many Requests');
+        const errStr = err instanceof Error ? err.message : String(err);
+        const isPrunedHistory = errStr.includes('Could not find the referenced transaction events');
+        if (isPrunedHistory) {
+          // The event cursor has reached beyond the historical pruning retention window of the RPC.
+          // Propagate immediately so caller ends historical pagination cleanly without retry spam.
+          throw err;
+        }
+
+        const isRateLimit = errStr.includes('429') || errStr.includes('Too Many Requests');
         if (endpoint.failures >= 3 || isRateLimit) {
           endpoint.isHealthy = false;
         }
@@ -92,7 +100,7 @@ export class SuiClientManager {
             endpoint: endpoint.url,
             latencyMs: endpoint.lastLatencyMs,
             failures: endpoint.failures,
-            error: err instanceof Error ? err.message : String(err),
+            error: errStr,
           },
           `RPC call failed on ${endpoint.url}. Attempting next endpoint...`
         );

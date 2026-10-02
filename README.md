@@ -169,6 +169,10 @@ SUI_WS_URL=wss://sui-mainnet.g.alchemy.com/v2/your_alchemy_key
 # Operator Private Key (bech32 'suiprivkey1...')
 SUI_PRIVATE_KEY=suiprivkey1...
 
+# Pyth API Key (REQUIRED for live Hermes access as of August 2026, obtain via terminal.pyth.network)
+# WARNING: Without this key, Pyth price updates will fail and liquidations will degrade or fail entirely.
+PYTH_API_KEY=your_pyth_api_key_here
+
 # Safety Mode: Set to 'false' only when ready for live execution
 DRY_RUN=true
 

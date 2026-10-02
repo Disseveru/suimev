@@ -27,6 +27,7 @@ bin/tenderly*
 *.mv
 
 # Python cache
-__pycache__/
-*.pyc
+# Cloned SDKs / Sub-repos
+sui-scallop-sdk/
+
 

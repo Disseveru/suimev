@@ -1,5 +1,6 @@
 import { Scallop } from '@scallop-io/sui-scallop-sdk';
 import { SuiClientManager } from '../../client/suiClient.js';
+import { suiGraphQL } from '../../client/graphqlClient.js';
 import { SCALLOP_CONFIG } from '../../config/constants.js';
 import { CONFIG } from '../../config/index.js';
 import { logger } from '../../ui/logger.js';
@@ -43,8 +44,9 @@ export class ScallopProtocol {
       this.sdk = new Scallop({
         addressId: SCALLOP_CONFIG.addressId,
         network: CONFIG.network === 'mainnet' ? 'mainnet' : 'testnet',
-        fullnodeUrl: CONFIG.rpcUrl.includes('alchemy') ? 'https://fullnode.mainnet.sui.io:443' : CONFIG.rpcUrl,
+        fullnodeUrl: CONFIG.rpcUrl,
         walletAddress: CONFIG.operatorAddress,
+        pythApiKey: CONFIG.pythApiKey,
       });
 
       await this.sdk.init();
@@ -67,10 +69,15 @@ export class ScallopProtocol {
         return await query.getObligationLocked(obligationId);
       }
     } catch {
-      // Fall through to direct on-chain object query
+      // Fall through to GraphQL / direct object query
     }
 
     try {
+      const gqlObj = await suiGraphQL.getObject(obligationId);
+      if (gqlObj?.contents) {
+        return Boolean((gqlObj.contents as any).liquidate_locked);
+      }
+
       const client = SuiClientManager.getInstance().getClient();
       const obj = await client.getObject({ id: obligationId, options: { showContent: true } });
       const fields = (obj.data?.content as any)?.fields;
@@ -78,6 +85,56 @@ export class ScallopProtocol {
     } catch {
       return false;
     }
+  }
+
+  public async getOnChainObligationRisk(obligationId: string): Promise<{
+    riskLevel: number;
+    unhealthyCollateralValue: number;
+    isLiquidatable: boolean;
+  }> {
+    try {
+      if (this.sdk) {
+        const query = await this.sdk.createScallopQuery();
+        const account = await query.getObligationAccountById(obligationId);
+        if (account) {
+          const isLiquidatable = (account.totalRiskLevel >= 1.0) || (account.totalUnhealthyCollateralValue > 0);
+          return {
+            riskLevel: account.totalRiskLevel,
+            unhealthyCollateralValue: account.totalUnhealthyCollateralValue,
+            isLiquidatable,
+          };
+        }
+      }
+    } catch {
+      // Fall through to conservative default
+    }
+    return { riskLevel: 0, unhealthyCollateralValue: 0, isLiquidatable: false };
+  }
+
+  public async getObligationCoinNames(obligationId: string): Promise<string[]> {
+    try {
+      if (this.sdk) {
+        const query = await this.sdk.createScallopQuery();
+        const oblData = await query.queryObligation(obligationId);
+        if (oblData) {
+          const coinTypes = [
+            ...oblData.collaterals.map((c: any) => c.type),
+            ...oblData.debts.map((d: any) => d.type),
+          ];
+          const names = new Set<string>();
+          for (const cType of coinTypes) {
+            const parsed = (query as any).utils?.parseCoinNameFromType?.(cType);
+            if (parsed && typeof parsed === 'string') {
+              names.add(parsed);
+            }
+          }
+          return Array.from(names);
+        }
+      }
+    } catch {
+      // Fall through to empty list on error
+    }
+    return [];
   }
 
   public async createScallopBuilder() {

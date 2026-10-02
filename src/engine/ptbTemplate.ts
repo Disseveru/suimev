@@ -1,6 +1,6 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { CONFIG } from '../config/index.js';
-import { SCALLOP_CONFIG, SUI_CLOCK_OBJECT_ID } from '../config/constants.js';
+import { SCALLOP_CONFIG, SUI_CLOCK_OBJECT_ID, SCALLOP_SHARED_VERSIONS } from '../config/constants.js';
 import { rpcManager } from '../client/suiClient.js';
 import { logger } from '../ui/logger.js';
 
@@ -28,12 +28,12 @@ export class FastPtbTemplateEngine {
   // Authoritative mainnet shared object initial versions
   public static readonly SHARED_OBJECT_VERSIONS = {
     CLOCK: { objectId: SUI_CLOCK_OBJECT_ID, initialSharedVersion: 1, mutable: false },
-    SCALLOP_VERSION: { objectId: SCALLOP_CONFIG.version, initialSharedVersion: 10471556, mutable: false },
-    SCALLOP_MARKET: { objectId: SCALLOP_CONFIG.market, initialSharedVersion: 10471556, mutable: true },
-    SCALLOP_DECIMALS: { objectId: SCALLOP_CONFIG.coinDecimalsRegistry, initialSharedVersion: 10471556, mutable: false },
-    SCALLOP_XORACLE: { objectId: SCALLOP_CONFIG.xOracle, initialSharedVersion: 10471556, mutable: false },
-    SCALLOP_INCENTIVE_POOLS: { objectId: SCALLOP_CONFIG.borrowIncentivePools, initialSharedVersion: 10471556, mutable: true },
-    SCALLOP_INCENTIVE_ACCOUNTS: { objectId: SCALLOP_CONFIG.borrowIncentiveAccounts, initialSharedVersion: 10471556, mutable: true },
+    SCALLOP_VERSION: { objectId: SCALLOP_CONFIG.version, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.version], mutable: false },
+    SCALLOP_MARKET: { objectId: SCALLOP_CONFIG.market, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.market], mutable: true },
+    SCALLOP_DECIMALS: { objectId: SCALLOP_CONFIG.coinDecimalsRegistry, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.coinDecimalsRegistry], mutable: false },
+    SCALLOP_XORACLE: { objectId: SCALLOP_CONFIG.xOracle, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.xOracle], mutable: false },
+    SCALLOP_INCENTIVE_POOLS: { objectId: SCALLOP_CONFIG.borrowIncentivePools, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.borrowIncentivePools], mutable: true },
+    SCALLOP_INCENTIVE_ACCOUNTS: { objectId: SCALLOP_CONFIG.borrowIncentiveAccounts, initialSharedVersion: SCALLOP_SHARED_VERSIONS[SCALLOP_CONFIG.borrowIncentiveAccounts], mutable: true },
   };
 
   /**

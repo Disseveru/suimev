@@ -151,13 +151,33 @@ describe('Pre-Flight devInspect Dry-Runs & Simulation Audit', () => {
 
   it('formats accurate local sui replay and Sentio debugger commands', async () => {
     const testDigest = '7TQf99gKpMEfwFKXgKXWeqjKYFKa7sd7z35uAJPn4XVm';
-    const analysis = await ReplayDebugger.analyzeTransaction(testDigest);
+    
+    // Mock the rpcManager to avoid network calls for a fake digest
+    const { rpcManager } = await import('../src/client/suiClient.js');
+    const originalExecute = rpcManager.executeWithFallback.bind(rpcManager);
+    rpcManager.executeWithFallback = async (op, fn) => {
+      if (op === 'getTransactionBlock') {
+        return {
+          effects: { status: { status: 'success' }, gasUsed: {} },
+          transaction: { data: { transaction: { commands: [] } } },
+          events: [],
+          balanceChanges: []
+        } as any;
+      }
+      return originalExecute(op, fn);
+    };
 
-    expect(analysis.digest).toBe(testDigest);
-    expect(analysis.suiReplayCommand).toContain(`sui replay`);
-    expect(analysis.suiReplayCommand).toContain(testDigest);
-    expect(analysis.sentioDebuggerUrl).toBe(`https://app.sentio.xyz/sui/tx/${testDigest}`);
-    expect(analysis.suiVisionUrl).toBe(`https://suivision.xyz/txblock/${testDigest}`);
-    expect(analysis.suiScanUrl).toBe(`https://suiscan.xyz/mainnet/tx/${testDigest}`);
+    try {
+      const analysis = await ReplayDebugger.analyzeTransaction(testDigest);
+
+      expect(analysis.digest).toBe(testDigest);
+      expect(analysis.suiReplayCommand).toContain(`sui replay`);
+      expect(analysis.suiReplayCommand).toContain(testDigest);
+      expect(analysis.sentioDebuggerUrl).toBe(`https://app.sentio.xyz/sui/tx/${testDigest}`);
+      expect(analysis.suiVisionUrl).toBe(`https://suivision.xyz/txblock/${testDigest}`);
+      expect(analysis.suiScanUrl).toBe(`https://suiscan.xyz/mainnet/tx/${testDigest}`);
+    } finally {
+      rpcManager.executeWithFallback = originalExecute;
+    }
   });
 });

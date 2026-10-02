@@ -1,9 +1,11 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { LiquidationOpportunity, ExecutionResult } from '../config/types.js';
 import { rpcManager } from '../client/suiClient.js';
+import { gasManager } from '../client/gasManager.js';
 import { CONFIG } from '../config/index.js';
 import { logger } from '../ui/logger.js';
 import { priceCache } from '../oracles/priceCache.js';
+import { telemetry } from './telemetry.js';
 
 /**
  * High-Performance Transaction Executor & Gas Optimizer
@@ -19,6 +21,24 @@ export class TransactionExecutor {
   ): Promise<ExecutionResult> {
     const startTime = Date.now();
     const suiPriceUsd = priceCache.getPriceUsd('0x2::sui::SUI') || 2.50;
+    // Safety Gate: Pyth Price Freshness Validation
+    // Per AGENTS.md §4.3 & §9.3, live broadcast mandates freshness <= 45s (allow 60s in dry-run mode for local tests)
+    const nowMs = Date.now();
+    const MAX_AGE_MS = CONFIG.dryRun ? 60000 : 45000;
+    const debtPrice = priceCache.getPriceBySymbol(opportunity.debtSymbol);
+    const colPrice = priceCache.getPriceBySymbol(opportunity.collateralSymbol);
+    
+    if (debtPrice && (nowMs - debtPrice.lastUpdatedMs > MAX_AGE_MS)) {
+      throw new Error(`Oracle price for ${opportunity.debtSymbol} is older than ${MAX_AGE_MS}ms (${((nowMs - debtPrice.lastUpdatedMs)/1000).toFixed(1)}s). Aborting per AGENTS.md freshness rules.`);
+    }
+    if (colPrice && (nowMs - colPrice.lastUpdatedMs > MAX_AGE_MS)) {
+      throw new Error(`Oracle price for ${opportunity.collateralSymbol} is older than ${MAX_AGE_MS}ms (${((nowMs - colPrice.lastUpdatedMs)/1000).toFixed(1)}s). Aborting per AGENTS.md freshness rules.`);
+    }
+
+    // Safety Gate: Net Profit Validation (Accounts for flash loan, DEX swap, and gas costs)
+    if (netProfitUsd < CONFIG.minProfitUsd) {
+      throw new Error(`Net profit ${netProfitUsd.toFixed(2)} USD is below minimum threshold ${CONFIG.minProfitUsd} USD. Aborting.`);
+    }
 
     // Set priority gas price to front-run competing searchers via Dynamic Priority Gas Auction (PGA)
     try {
@@ -68,11 +88,12 @@ export class TransactionExecutor {
 
     // LIVE EXECUTION PATH
     try {
-      // Verify operator has sufficient SUI balance for gas budget
+      // Verify operator has sufficient SUI balance for gas budget (at least 2x budget per AGENTS.md §4.3)
+      const minRequiredMist = BigInt(CONFIG.gasBudget) * 2n;
       const gasCheck = await this.checkOperatorGasBalance();
       if (!gasCheck.isSufficient) {
         throw new Error(
-          `Operator wallet ${CONFIG.operatorAddress} has insufficient SUI (${gasCheck.balanceSui.toFixed(4)} SUI). Required gas budget: ${(Number(CONFIG.gasBudget) / 1e9).toFixed(4)} SUI`
+          `Operator wallet ${CONFIG.operatorAddress} has insufficient SUI (${gasCheck.balanceSui.toFixed(4)} SUI). Required gas reserve: ${(Number(minRequiredMist) / 1e9).toFixed(4)} SUI (2x budget per AGENTS.md §4.3)`
         );
       }
 
@@ -81,10 +102,18 @@ export class TransactionExecutor {
         '🚀 BROADCASTING LIVE LIQUIDATION PTB TO SUI CONSENSUS...'
       );
 
-      // 🏁 PARALLEL BROADCAST RACE — fire to ALL healthy RPCs simultaneously
-      // Whichever endpoint confirms first wins; others are abandoned.
-      // Saves 50–150ms vs sequential tryout on a congested block.
-      const response = await rpcManager.executeBroadcastRace(
+      // Zero-RPC Gas Object Optimization: Use locally tracked in-memory gas coin to eliminate implicit getCoins RPC round-trip
+      const cachedGas = gasManager.getGasPayment();
+      if (cachedGas) {
+        tx.setGasPayment([{
+          objectId: cachedGas.objectId,
+          version: cachedGas.version,
+          digest: cachedGas.digest,
+        }]);
+      }
+
+      // 🏁 SEQUENTIAL FAILOVER — iterate through RPCs to bypass rate limits
+      const response = await rpcManager.executeWithFallback(
         'signAndExecuteTransaction',
         async (client) => {
           return await client.signAndExecuteTransaction({
@@ -98,6 +127,9 @@ export class TransactionExecutor {
         }
       );
 
+      // Surgically update in-memory gas coin version and digest from execution effects in 0ms
+      gasManager.updateFromExecutionEffects(response.effects);
+
       const digest = response.digest;
       const status = response.effects?.status?.status;
       const isSuccess = status === 'success';
@@ -107,9 +139,31 @@ export class TransactionExecutor {
       const gasUsedSui = Number(netGasMist > 0n ? netGasMist : 0n) / 1e9;
       const gasCostUsd = gasUsedSui * suiPriceUsd;
 
+      const latencyMs = Date.now() - startTime;
+      telemetry.recordExecution({
+        opportunityId: opportunity.obligation.obligationId,
+        protocol: opportunity.protocol,
+        debtSymbol: opportunity.debtSymbol,
+        collateralSymbol: opportunity.collateralSymbol,
+        expectedProfitUsd: opportunity.expectedGrossProfitUsd,
+        actualProfitUsd: isSuccess ? netProfitUsd : 0,
+        gasCostSui: gasUsedSui,
+        success: isSuccess,
+        digest,
+        error: response.effects?.status?.error,
+        timestampMs: Date.now(),
+        latencies: {
+          evalDurationMs: 0,
+          ptbBuildDurationMs: 0,
+          simulationDurationMs: 0,
+          broadcastDurationMs: latencyMs,
+          totalCycleDurationMs: latencyMs,
+        },
+      });
+
       if (isSuccess) {
         logger.info(
-          { digest, latencyMs: Date.now() - startTime, netProfitUsd: netProfitUsd.toFixed(2) },
+          { digest, latencyMs, netProfitUsd: netProfitUsd.toFixed(2) },
           '🎉 LIQUIDATION EXECUTED SUCCESSFULLY ON-CHAIN!'
         );
       } else {
@@ -132,6 +186,25 @@ export class TransactionExecutor {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.error({ error: errorMsg }, 'Execution failed during transaction submission');
+
+      telemetry.recordExecution({
+        opportunityId: opportunity.obligation.obligationId,
+        protocol: opportunity.protocol,
+        debtSymbol: opportunity.debtSymbol,
+        collateralSymbol: opportunity.collateralSymbol,
+        expectedProfitUsd: opportunity.expectedGrossProfitUsd,
+        gasCostSui: 0,
+        success: false,
+        error: errorMsg,
+        timestampMs: Date.now(),
+        latencies: {
+          evalDurationMs: 0,
+          ptbBuildDurationMs: 0,
+          simulationDurationMs: 0,
+          broadcastDurationMs: Date.now() - startTime,
+          totalCycleDurationMs: Date.now() - startTime,
+        },
+      });
 
       return {
         digest: 'FAILED',
@@ -163,11 +236,13 @@ export class TransactionExecutor {
     // Allocate configured percentage of profit as a priority tip to validators
     const tipAllocationMist = BigInt(Math.floor(profitSui * CONFIG.priorityProfitShare * 1e9));
 
-    // Typical PTB uses ~4,000 computation gas units
-    const estimatedComputationUnits = 4000n;
-    const additionalGasPricePerUnit = tipAllocationMist / estimatedComputationUnits;
+    // Typical liquidation PTB uses ~3,500,000 computation gas units on Sui
+    // Computation cost (MIST) = units * (gasPrice / 1000)
+    // Therefore additionalGasPrice = (tipAllocationMist * 1000) / estimatedUnits
+    const estimatedComputationUnits = 3_500_000n;
+    const additionalGasPrice = (tipAllocationMist * 1000n) / estimatedComputationUnits;
 
-    const calculatedGasPrice = refGasPrice + additionalGasPricePerUnit;
+    const calculatedGasPrice = refGasPrice + additionalGasPrice;
     const minGasPrice = BigInt(Math.floor(Number(refGasPrice) * baseMultiplier));
     const maxGasPrice = BigInt(Math.floor(Number(refGasPrice) * maxMultiplier));
 
@@ -210,12 +285,13 @@ export class TransactionExecutor {
     balanceSui: number;
     isSufficient: boolean;
   }> {
+    const minRequiredMist = BigInt(CONFIG.gasBudget) * 2n;
     const now = Date.now();
     if (!forceRefresh && this.cachedGasBalance && now - this.cachedGasBalance.lastCheckedMs < 5_000) {
       return {
         balanceMist: this.cachedGasBalance.balanceMist,
         balanceSui: this.cachedGasBalance.balanceSui,
-        isSufficient: this.cachedGasBalance.balanceMist >= BigInt(CONFIG.gasBudget),
+        isSufficient: this.cachedGasBalance.balanceMist >= minRequiredMist,
       };
     }
 
@@ -230,7 +306,7 @@ export class TransactionExecutor {
       return {
         balanceMist,
         balanceSui,
-        isSufficient: balanceMist >= BigInt(CONFIG.gasBudget),
+        isSufficient: balanceMist >= minRequiredMist,
       };
     } catch {
       return { balanceMist: 0n, balanceSui: 0, isSufficient: false };

@@ -102,7 +102,7 @@ export class NaviIndexer {
     this.knownBorrowers.add(address);
   }
 
-  public async discoverBorrowersFromHistory(maxPages: number = 20): Promise<void> {
+  public async discoverBorrowersFromHistory(maxPages: number = 200): Promise<void> {
     try {
       logger.info('Querying historical NAVI lending & incentive events with cursor pagination...');
       
@@ -272,7 +272,7 @@ export class NaviIndexer {
               amount: rawAmount,
               decimals,
               valueUsd: 0,
-              liquidationThreshold: cfg?.liquidationThreshold ?? 0.85,
+              liquidationThreshold: supply.pool?.emode?.lt ?? cfg?.liquidationThreshold ?? 0.85,
             });
           }
         } else if (pos.type === 'navi-lending-emode-borrow' && pos['navi-lending-emode-borrow']) {

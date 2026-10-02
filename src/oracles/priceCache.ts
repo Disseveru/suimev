@@ -43,6 +43,13 @@ export class PriceCache {
       CERT: 0.85,
       VSUI: 0.85,
       SCA_SUI: 0.85,
+      BUCK: 1.00,
+      AUSD: 1.00,
+      NS: 0.015,
+      SSUI: 0.85,
+      BLUB: 0.000001,
+      FUD: 0.0000005,
+      IKA: 0.002,
     };
 
     const now = Date.now();

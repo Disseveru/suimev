@@ -5,6 +5,7 @@ import { priceCache } from '../../oracles/priceCache.js';
 import { getCoinConfigByType, normalizeStructTag } from '../../config/coins.js';
 import { ensureCetusCompat } from '../../client/cetusCompat.js';
 import { CONFIG } from '../../config/index.js';
+import { logger } from '../../ui/logger.js';
 
 // Activate Cetus SDK compatibility shim
 ensureCetusCompat();
@@ -71,6 +72,51 @@ export const CANONICAL_CETUS_POOLS: Record<string, CetusPoolDef> = {
     coinTypeA: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX',
     coinTypeB: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
   },
+  'VSUI_SUI': {
+    poolId: '0x6c545e78638c8c1db7a48b282bb8ca79da107993fcb185f75cedc1f5adb2f535',
+    coinTypeA: '0x549e8b69270def3cafaf13141f315201853d90895d96706e61266b66838a3d45::vsui::VSUI',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'CERT_SUI': {
+    poolId: '0x6c545e78638c8c1db7a48b282bb8ca79da107993fcb185f75cedc1f5adb2f535',
+    coinTypeA: '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55::cert::CERT',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'BLUB_SUI': {
+    poolId: '0x6f5ef2889f274dfabc7d41fad0b9f68a2e52868cc074ab73e119db3ef30a0b7a',
+    coinTypeA: '0xfa7ac3951fdca92c5200d468d31a365eb03b2be9936fde615e69f0c1274ad3a0::BLUB::BLUB',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'IKA_WAL': {
+    poolId: '0xa712328e5ed6f2ec7c053d50701b19a82c47b7f7bbbb49237f810fba33b6aad5',
+    coinTypeA: '0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa::ika::IKA',
+    coinTypeB: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
+  },
+  'BUCK_USDC': {
+    poolId: '0x6ec881313f166e714f52a78c187d90d7966ef4a378efbfa98e3b5e90a618be24',
+    coinTypeA: '0xce7ffda7a8c4f9a35d94e223d6a4a6b2512f7a08b5e28e67f0b5d0c07b6cb0d8::buck::BUCK',
+    coinTypeB: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+  },
+  'AUSD_USDC': {
+    poolId: '0x0f90e9e900c3b0eb23180de07d5705a6104bc1ec96ea10c4f8ebec48c089c894',
+    coinTypeA: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2abda22b25c3bd51b65e76::ausd::AUSD',
+    coinTypeB: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+  },
+  'NS_SUI': {
+    poolId: '0x3565b9bb765b214f4da6ec82121305bb9930f711200fa4f75747cb9b867c4692',
+    coinTypeA: '0x5145494a5f5100e64540b1a052d5bf52327702d8471b425cb43e67db57936ac0::ns::NS',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'SSUI_SUI': {
+    poolId: '0xb4b6a7ee7b60f157778b021d7b328153cfc900e576ec5a6439bf244b76a0f443',
+    coinTypeA: '0xd9e6e44f53535914d9b62649ef9066eb4b143715ff2f4ce8e4e9cfb5b9c03b1e::ssui::SSUI',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'FUD_SUI': {
+    poolId: '0xc5d3c8c7efcc51cbab207612f1dbb1fb3a1bdfd924dd1804d9c0e5a87be758f8',
+    coinTypeA: '0x76cb819b01abed502bee8a702b4c2d5f5074744637f812d9047f60effa637742::fud::FUD',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
 };
 
 // Pre-indexed Direct Pool Map for O(1) ~20ns routing lookup
@@ -110,6 +156,84 @@ const NORM_USDC = normalizeStructTag(USDC_TOKEN);
  * Computes quotations and constructs pure Move swap calls within PTBs.
  */
 export class CetusRouter {
+  /**
+   * Dynamically register a pool into the O(1) routing map
+   */
+  public static registerPool(poolId: string, coinTypeA: string, coinTypeB: string): void {
+    if (!poolId || !coinTypeA || !coinTypeB) return;
+    const normA = normalizeStructTag(coinTypeA);
+    const normB = normalizeStructTag(coinTypeB);
+    DIRECT_POOL_MAP.set(`${normA}:::${normB}`, {
+      poolId,
+      a2b: true,
+      coinTypeA,
+      coinTypeB,
+    });
+    DIRECT_POOL_MAP.set(`${normB}:::${normA}`, {
+      poolId,
+      a2b: false,
+      coinTypeA,
+      coinTypeB,
+    });
+  }
+
+  /**
+   * Fetch all active Cetus pools directly from Cetus API/SDK and index them into memory
+   */
+  public static async syncDynamicPools(): Promise<number> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch('https://api-sui.cetus.zone/v2/sui/pools', {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        logger.warn({ status: res.status }, 'Cetus API responded with non-200 status during dynamic pool sync');
+        return Math.floor(DIRECT_POOL_MAP.size / 2);
+      }
+
+      const body = (await res.json()) as any;
+      const pools = body?.data?.lp_list || body?.data?.pools || [];
+      let registered = 0;
+
+      for (const pool of pools) {
+        const poolId = pool.address || pool.pool_address || pool.poolId;
+        const coinA = pool.coin_a_address || pool.coin_type_a || pool.coinA;
+        const coinB = pool.coin_b_address || pool.coin_type_b || pool.coinB;
+        if (poolId && coinA && coinB) {
+          this.registerPool(poolId, coinA, coinB);
+          registered++;
+        }
+      }
+
+      logger.info(
+        { discoveredPools: registered, totalIndexedRoutes: DIRECT_POOL_MAP.size },
+        '🚀 Cetus Dynamic Pool Discovery synchronized successfully'
+      );
+      return registered;
+    } catch (err: any) {
+      logger.warn(
+        { error: err?.message || String(err) },
+        'Dynamic Cetus pool sync deferred; baseline canonical pool cache remains active'
+      );
+      return Math.floor(DIRECT_POOL_MAP.size / 2);
+    }
+  }
+
+  /**
+   * Start periodic background sync for newly deployed Cetus pools
+   */
+  public static startDynamicSync(intervalMs: number = 600_000): NodeJS.Timeout {
+    return setInterval(() => {
+      this.syncDynamicPools().catch((err) => {
+        logger.warn({ error: err?.message || String(err) }, 'Background Cetus pool sync failed');
+      });
+    }, intervalMs);
+  }
+
   /**
    * Find matching Cetus pool for pair with precise CoinA/CoinB classification (O(1) Map lookup)
    */

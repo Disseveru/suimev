@@ -1,3 +1,4 @@
+import { normalizeStructTag as mystenNormalizeStructTag } from '@mysten/sui/utils';
 import { CoinMetadataConfig } from './types.js';
 
 /**
@@ -239,6 +240,83 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
   },
+  BUCK: {
+    symbol: 'BUCK',
+    name: 'Bucket USD',
+    decimals: 9,
+    coinType: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK',
+    pythPriceFeedId: '0x15addb7250489721752834b6b158019ab27dfbc6e17424ef244837492c286a59',
+    naviPoolId: 14,
+    scallopCoinName: 'buck',
+    liquidationThreshold: 0.90,
+    liquidationBonus: 0.05,
+  },
+  AUSD: {
+    symbol: 'AUSD',
+    name: 'Agora USD',
+    decimals: 6,
+    coinType: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2abda49b5c802863f6d38e::ausd::AUSD',
+    pythPriceFeedId: '0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a',
+    naviPoolId: 21,
+    scallopCoinName: 'ausd',
+    liquidationThreshold: 0.90,
+    liquidationBonus: 0.05,
+  },
+  NS: {
+    symbol: 'NS',
+    name: 'SuiNS Token',
+    decimals: 6,
+    coinType: '0x5145494a5f5100e64540b0aa69f194e9504863642a4336a5ea23821e5faab34b::ns::NS',
+    pythPriceFeedId: '0x29bdd5248234e33bd93d3b81100b5fa32eaa5997843847e2c2cb16d7c6d9f7ff',
+    naviPoolId: 17,
+    scallopCoinName: 'ns',
+    liquidationThreshold: 0.70,
+    liquidationBonus: 0.08,
+  },
+  SSUI: {
+    symbol: 'sSUI',
+    name: 'Spring Staked SUI',
+    decimals: 9,
+    coinType: '0x83556891f4a0f233ce7b05eae7d4c844f1190730da695a366492323972224102::spring_sui::SPRING_SUI',
+    pythPriceFeedId: '',
+    naviPoolId: 22,
+    scallopCoinName: 'ssui',
+    liquidationThreshold: 0.85,
+    liquidationBonus: 0.05,
+  },
+  BLUB: {
+    symbol: 'BLUB',
+    name: 'Blub Token',
+    decimals: 2,
+    coinType: '0xfa7ff699e97e1825438810deea99f38f3cb7502c971514b3d716437af364b9e9::blub::BLUB',
+    pythPriceFeedId: '',
+    naviPoolId: 25,
+    scallopCoinName: 'blub',
+    liquidationThreshold: 0.60,
+    liquidationBonus: 0.10,
+  },
+  FUD: {
+    symbol: 'FUD',
+    name: 'Fud the Pug',
+    decimals: 5,
+    coinType: '0x76cb819b01abed502bee8a702b4c2d5427320485aa2310f5671d6d13ec3079b7::fud::FUD',
+    pythPriceFeedId: '',
+    naviPoolId: 26,
+    scallopCoinName: 'fud',
+    liquidationThreshold: 0.60,
+    liquidationBonus: 0.10,
+  },
+  IKA: {
+    symbol: 'IKA',
+    name: 'Ika Token',
+    decimals: 9,
+    coinType: '0x6d9e44ea883f395642d4a667ec36cb488661ea242b58dcf4db9e31d42a6ff79a::ika::IKA',
+    pythPriceFeedId: '',
+    naviPoolId: 27,
+    scallopCoinName: 'ika',
+    liquidationThreshold: 0.65,
+    liquidationBonus: 0.08,
+  },
   SCA_SUI: {
     symbol: 'SCA_SUI',
     name: 'Scallop Staked SUI',
@@ -261,23 +339,19 @@ const COIN_BY_PYTH_ID_MAP = new Map<string, CoinMetadataConfig>();
 
 const normalizedTagCache = new Map<string, string>();
 
+/**
+ * Canonical struct tag normalizer using @mysten/sui/utils standard
+ */
 export function normalizeStructTag(type: string): string {
   if (!type) return '';
   const cached = normalizedTagCache.get(type);
   if (cached !== undefined) return cached;
 
-  const trimmed = type.trim();
-  let result = trimmed.toLowerCase();
-  const parts = trimmed.split('::');
-  if (parts.length === 3) {
-    let addr = parts[0].toLowerCase();
-    if (!addr.startsWith('0x')) addr = '0x' + addr;
-    try {
-      const cleanHex = addr.slice(2).replace(/^0+/, '') || '0';
-      result = `0x${cleanHex}::${parts[1]}::${parts[2]}`;
-    } catch {
-      result = `${addr}::${parts[1]}::${parts[2]}`;
-    }
+  let result: string;
+  try {
+    result = mystenNormalizeStructTag(type.trim());
+  } catch {
+    result = type.trim().toLowerCase();
   }
   normalizedTagCache.set(type, result);
   return result;
@@ -286,8 +360,12 @@ export function normalizeStructTag(type: string): string {
 for (const config of Object.values(COIN_CONFIGS)) {
   const normType = normalizeStructTag(config.coinType);
   COIN_BY_TYPE_MAP.set(normType, config);
-  // Also register un-stripped lowercase for direct matching
+  // Also register raw lowercase and short address variants for instant resolution
   COIN_BY_TYPE_MAP.set(config.coinType.toLowerCase(), config);
+  if (config.coinType.includes('0000000000000000000000000000000000000000000000000000000000000002::sui::SUI')) {
+    COIN_BY_TYPE_MAP.set('0x2::sui::sui', config);
+    COIN_BY_TYPE_MAP.set('0x2::sui::SUI', config);
+  }
   COIN_BY_SYMBOL_MAP.set(config.symbol.toUpperCase(), config);
   // Only register Pyth ID if it's a valid non-empty feed ID
   if (config.pythPriceFeedId) {
