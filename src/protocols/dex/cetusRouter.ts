@@ -5,6 +5,7 @@ import { priceCache } from '../../oracles/priceCache.js';
 import { getCoinConfigByType, normalizeStructTag } from '../../config/coins.js';
 import { ensureCetusCompat } from '../../client/cetusCompat.js';
 import { CONFIG } from '../../config/index.js';
+import { logger } from '../../ui/logger.js';
 
 // Activate Cetus SDK compatibility shim
 ensureCetusCompat();
@@ -150,6 +151,84 @@ const NORM_USDC = normalizeStructTag(USDC_TOKEN);
  * Computes quotations and constructs pure Move swap calls within PTBs.
  */
 export class CetusRouter {
+  /**
+   * Dynamically register a pool into the O(1) routing map
+   */
+  public static registerPool(poolId: string, coinTypeA: string, coinTypeB: string): void {
+    if (!poolId || !coinTypeA || !coinTypeB) return;
+    const normA = normalizeStructTag(coinTypeA);
+    const normB = normalizeStructTag(coinTypeB);
+    DIRECT_POOL_MAP.set(`${normA}:::${normB}`, {
+      poolId,
+      a2b: true,
+      coinTypeA,
+      coinTypeB,
+    });
+    DIRECT_POOL_MAP.set(`${normB}:::${normA}`, {
+      poolId,
+      a2b: false,
+      coinTypeA,
+      coinTypeB,
+    });
+  }
+
+  /**
+   * Fetch all active Cetus pools directly from Cetus API/SDK and index them into memory
+   */
+  public static async syncDynamicPools(): Promise<number> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch('https://api-sui.cetus.zone/v2/sui/pools', {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        logger.warn({ status: res.status }, 'Cetus API responded with non-200 status during dynamic pool sync');
+        return Math.floor(DIRECT_POOL_MAP.size / 2);
+      }
+
+      const body = (await res.json()) as any;
+      const pools = body?.data?.lp_list || body?.data?.pools || [];
+      let registered = 0;
+
+      for (const pool of pools) {
+        const poolId = pool.address || pool.pool_address || pool.poolId;
+        const coinA = pool.coin_a_address || pool.coin_type_a || pool.coinA;
+        const coinB = pool.coin_b_address || pool.coin_type_b || pool.coinB;
+        if (poolId && coinA && coinB) {
+          this.registerPool(poolId, coinA, coinB);
+          registered++;
+        }
+      }
+
+      logger.info(
+        { discoveredPools: registered, totalIndexedRoutes: DIRECT_POOL_MAP.size },
+        '🚀 Cetus Dynamic Pool Discovery synchronized successfully'
+      );
+      return registered;
+    } catch (err: any) {
+      logger.warn(
+        { error: err?.message || String(err) },
+        'Dynamic Cetus pool sync deferred; baseline canonical pool cache remains active'
+      );
+      return Math.floor(DIRECT_POOL_MAP.size / 2);
+    }
+  }
+
+  /**
+   * Start periodic background sync for newly deployed Cetus pools
+   */
+  public static startDynamicSync(intervalMs: number = 600_000): NodeJS.Timeout {
+    return setInterval(() => {
+      this.syncDynamicPools().catch((err) => {
+        logger.warn({ error: err?.message || String(err) }, 'Background Cetus pool sync failed');
+      });
+    }, intervalMs);
+  }
+
   /**
    * Find matching Cetus pool for pair with precise CoinA/CoinB classification (O(1) Map lookup)
    */

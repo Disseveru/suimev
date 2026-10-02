@@ -11,6 +11,7 @@ import { ZeroCapitalPtbBuilder } from './ptbBuilder.js';
 import { PreFlightSimulator } from './simulator.js';
 import { TransactionExecutor } from './executor.js';
 import { gasManager } from '../client/gasManager.js';
+import { CetusRouter } from '../protocols/dex/cetusRouter.js';
 import { logger } from '../ui/logger.js';
 
 /**
@@ -66,6 +67,10 @@ export class LiquidationSearcher {
         ? 'ℹ️ Operator Balance is 0 SUI (Acceptable in DRY-RUN mode; fund wallet with >= 0.1 SUI before switching to live)'
         : '⚠️ WARNING: Operator Gas Balance is insufficient for live gas budgets!'
     );
+
+    // Dynamic Cetus Pool Discovery & Background Refresh
+    await CetusRouter.syncDynamicPools();
+    CetusRouter.startDynamicSync(600_000);
 
     // Initialize protocols
     if (CONFIG.protocols.includes('navi')) {
