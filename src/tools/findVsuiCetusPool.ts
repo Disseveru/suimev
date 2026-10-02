@@ -23,17 +23,11 @@ async function findVsuiPool() {
       const coinA = (j?.coin_type_a || '').toLowerCase();
       const coinB = (j?.coin_type_b || '').toLowerCase();
       if (
-        coinA.includes('vsui') || coinB.includes('vsui') ||
-        coinA.includes('549e8b') || coinB.includes('549e8b') ||
-        coinA.includes('buck') || coinB.includes('buck') ||
-        coinA.includes('ausd') || coinB.includes('ausd') ||
-        coinA.includes('fud') || coinB.includes('fud') ||
-        coinA.includes('blub') || coinB.includes('blub') ||
-        coinA.includes('ika') || coinB.includes('ika') ||
-        coinA.includes('ssui') || coinB.includes('ssui') ||
-        coinA.includes('ns') || coinB.includes('ns')
+        coinA.includes('cert') || coinB.includes('cert') ||
+        coinA.includes('549e8b69270def') || coinB.includes('549e8b69270def') ||
+        coinA.includes('vsui') || coinB.includes('vsui')
       ) {
-        console.log(`FOUND POOL: ${j?.pool_id} | ${j?.coin_type_a} / ${j?.coin_type_b}`);
+        console.log(`FOUND VOLO VSUI / CERT POOL: ${j?.pool_id} | ${j?.coin_type_a} / ${j?.coin_type_b}`);
       }
     }
     if (!res.hasNextPage || !res.nextCursor) break;

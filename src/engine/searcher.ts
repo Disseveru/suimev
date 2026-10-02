@@ -219,7 +219,11 @@ export class LiquidationSearcher {
       }
     } catch (err: any) {
       logger.error(
-        { error: err?.message || String(err), stack: err?.stack },
+        {
+          error: err?.message || String(err),
+          stack: err?.stack,
+          details: JSON.stringify(err, Object.getOwnPropertyNames(err), 2),
+        },
         'Unhandled error in liquidation pipeline'
       );
       return false;
