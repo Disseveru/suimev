@@ -212,8 +212,11 @@ export class LiquidationSearcher {
         this.stats.failedLiquidations++;
         return false;
       }
-    } catch (err) {
-      logger.error({ error: err }, 'Unhandled error in liquidation pipeline');
+    } catch (err: any) {
+      logger.error(
+        { error: err?.message || String(err), stack: err?.stack },
+        'Unhandled error in liquidation pipeline'
+      );
       return false;
     }
   }
