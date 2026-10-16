@@ -12,6 +12,9 @@ import { PreFlightSimulator } from './simulator.js';
 import { TransactionExecutor } from './executor.js';
 import { gasManager } from '../client/gasManager.js';
 import { CetusRouter } from '../protocols/dex/cetusRouter.js';
+import { validateSharedVersions } from '../config/constants.js';
+import { rpcManager } from '../client/suiClient.js';
+import { priceCache } from '../oracles/priceCache.js';
 import { logger } from '../ui/logger.js';
 
 /**
@@ -21,6 +24,12 @@ export class LiquidationSearcher {
   private isRunning = false;
   private startTime = Date.now();
   private isProcessingQueue = false;
+  private isTickRunning = false;
+  private tickInterval: NodeJS.Timeout | null = null;
+  private queue: LiquidationOpportunity[] = [];
+  private inFlightObligations: Set<string> = new Set();
+  private activePipelineCount = 0;
+  private readonly MAX_CONCURRENT_PIPELINES = 3;
 
   public stats: SystemStats = {
     uptimeSeconds: 0,
@@ -81,45 +90,70 @@ export class LiquidationSearcher {
 
     if (CONFIG.protocols.includes('scallop')) {
       await scallopProtocol.initialize();
+      try {
+        await validateSharedVersions(rpcManager.getClient());
+        logger.info('Verified Scallop shared object initial versions against on-chain state');
+      } catch (err) {
+        logger.warn({ error: err }, 'Scallop shared versions validation warning');
+      }
       scallopIndexer.onObligationUpdate((state) => this.handleObligationUpdate(state));
       await scallopIndexer.start();
     }
 
     // Start Pyth price feeds and register price-tick trigger
     pythService.onPriceUpdate(() => {
-      this.handlePriceTick();
+      this.handlePriceTick().catch(() => {});
     });
     await pythService.start(1000);
 
     // Continuous tick loop
-    setInterval(() => {
+    this.tickInterval = setInterval(() => {
       this.updateStats();
-      this.processImmediateTargets();
+      this.processImmediateTargets().catch((err) => {
+        logger.warn({ error: err?.message }, 'Error in periodic searcher tick');
+      });
     }, 1000);
   }
 
   public stop(): void {
     this.isRunning = false;
+    if (this.tickInterval) {
+      clearInterval(this.tickInterval);
+      this.tickInterval = null;
+    }
+    this.queue = [];
+    this.inFlightObligations.clear();
+    this.activePipelineCount = 0;
     pythService.stop();
     naviIndexer.stop();
     scallopIndexer.stop();
+    gasManager.stopBackgroundReconciliation();
     logger.info('SuiMEV Liquidation Engine stopped');
   }
 
   private handleObligationUpdate(state: ObligationState): void {
     obligationRegistry.upsertObligation(state);
+    ZeroCapitalPtbBuilder.invalidateLockCache(state.obligationId);
     if (state.healthFactor < 1.0) {
-      this.processImmediateTargets();
+      this.processImmediateTargets().catch(() => {});
     } else if (state.healthFactor <= 1.03 && state.protocol === 'scallop') {
       // Institutional Predictive Pre-Warm: Pre-fetch Scallop lock status into RAM before 1.0 breach
       scallopProtocol.isObligationLocked(state.obligationId).catch(() => {});
     }
   }
 
-  private handlePriceTick(): void {
-    const newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
-    if (newlyUndercollateralized.length > 0) {
-      this.processImmediateTargets();
+  private async handlePriceTick(): Promise<void> {
+    if (this.isTickRunning) return;
+    this.isTickRunning = true;
+    try {
+      const newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
+      if (newlyUndercollateralized.length > 0) {
+        await this.processImmediateTargets();
+      }
+    } catch (err: any) {
+      logger.warn({ error: err?.message }, 'Error during price tick evaluation');
+    } finally {
+      this.isTickRunning = false;
     }
   }
 
@@ -133,19 +167,78 @@ export class LiquidationSearcher {
   }
 
   /**
-   * Process all currently liquidatable obligations
+   * Process all currently liquidatable obligations using a bounded concurrency queue
    */
   public async processImmediateTargets(): Promise<void> {
+    const targets = obligationRegistry.getImmediateTargets();
+    if (targets.length === 0 && this.queue.length === 0) {
+      return;
+    }
+
+    // Snapshot collection before iterating per AGENTS.md Rule 5
+    const targetList = Array.from(targets);
+    for (const target of targetList) {
+      const oblId = target.obligationId;
+      if (this.inFlightObligations.has(oblId)) {
+        continue;
+      }
+      if (this.queue.some((item) => item.obligation.obligationId === oblId)) {
+        continue;
+      }
+
+      const opp = HealthFactorEngine.findBestLiquidationOpportunity(target);
+      if (opp && opp.expectedGrossProfitUsd >= CONFIG.minProfitUsd) {
+        // Price Freshness & Stale Fallback Guard per audit plan & AGENTS.md §8
+        if (!priceCache.arePricesFreshForOpportunity(opp)) {
+          logger.warn(
+            { borrower: target.ownerAddress, protocol: target.protocol },
+            'Opportunity references stale or unverified cold-start seed prices — triggering on-demand Pyth refresh'
+          );
+          pythService.fetchLatestPrices().catch(() => {});
+          continue;
+        }
+
+        this.queue.push(opp);
+      }
+    }
+
+    // Sort queue by gross profit descending (highest MEV yield executed first)
+    this.queue.sort((a, b) => b.expectedGrossProfitUsd - a.expectedGrossProfitUsd);
+
+    this.drainQueue();
+  }
+
+  /**
+   * Drain opportunity queue ensuring concurrency never exceeds MAX_CONCURRENT_PIPELINES
+   * and no burst arrivals or dropped opportunities occur.
+   */
+  private drainQueue(): void {
     if (this.isProcessingQueue) return;
     this.isProcessingQueue = true;
 
     try {
-      const targets = obligationRegistry.getImmediateTargets();
-      for (const target of targets) {
-        const opp = HealthFactorEngine.findBestLiquidationOpportunity(target);
-        if (opp && opp.expectedGrossProfitUsd >= CONFIG.minProfitUsd) {
-          await this.executeLiquidationPipeline(opp);
+      while (this.activePipelineCount < this.MAX_CONCURRENT_PIPELINES && this.queue.length > 0) {
+        const opp = this.queue.shift();
+        if (!opp) break;
+
+        const oblId = opp.obligation.obligationId;
+        if (this.inFlightObligations.has(oblId)) {
+          continue;
         }
+
+        this.inFlightObligations.add(oblId);
+        this.activePipelineCount++;
+
+        this.executeLiquidationPipeline(opp)
+          .catch((err) => {
+            logger.warn({ error: err?.message, borrower: opp.obligation.ownerAddress }, 'Pipeline execution encountered an error');
+          })
+          .finally(() => {
+            this.activePipelineCount--;
+            this.inFlightObligations.delete(oblId);
+            ZeroCapitalPtbBuilder.invalidateLockCache(oblId);
+            this.drainQueue();
+          });
       }
     } finally {
       this.isProcessingQueue = false;
@@ -227,6 +320,8 @@ export class LiquidationSearcher {
         'Unhandled error in liquidation pipeline'
       );
       return false;
+    } finally {
+      ZeroCapitalPtbBuilder.invalidateLockCache(opportunity.obligation.obligationId);
     }
   }
 }

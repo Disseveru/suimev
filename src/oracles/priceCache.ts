@@ -65,6 +65,7 @@ export class PriceCache {
           rawPrice: BigInt(Math.floor(defaultPrice * 1e8)),
           publishTime: Math.floor(now / 1000),
           lastUpdatedMs: now,
+          isDefaultSeed: true,
         });
       }
     }
@@ -72,12 +73,16 @@ export class PriceCache {
 
   public updatePrice(price: OraclePrice): void {
     const normType = normalizeStructTag(price.coinType);
-    this.pricesByCoinType.set(normType, price);
-    this.pricesBySymbol.set(price.symbol.toUpperCase(), price);
+    const updatedPrice: OraclePrice = {
+      ...price,
+      isDefaultSeed: price.isDefaultSeed ?? false,
+    };
+    this.pricesByCoinType.set(normType, updatedPrice);
+    this.pricesBySymbol.set(price.symbol.toUpperCase(), updatedPrice);
 
     const cfg = COIN_CONFIGS[price.symbol.toUpperCase()];
     if (cfg) {
-      this.pricesByPythId.set(cfg.pythPriceFeedId.toLowerCase(), price);
+      this.pricesByPythId.set(cfg.pythPriceFeedId.toLowerCase(), updatedPrice);
     }
   }
 
@@ -97,6 +102,7 @@ export class PriceCache {
       rawPrice: BigInt(rawPrice),
       publishTime,
       lastUpdatedMs: Date.now(),
+      isDefaultSeed: false,
     };
 
     this.updatePrice(oraclePrice);
@@ -118,6 +124,7 @@ export class PriceCache {
       rawPrice: BigInt(rawPrice),
       publishTime,
       lastUpdatedMs: Date.now(),
+      isDefaultSeed: false,
     };
 
     this.updatePrice(oraclePrice);
@@ -158,6 +165,70 @@ export class PriceCache {
 
   public getAllPrices(): OraclePrice[] {
     return Array.from(this.pricesBySymbol.values());
+  }
+
+  /**
+   * Check if a price exists, is NOT a cold-start static seed default,
+   * and was updated within maxAgeMs (default 60s per audit plan & AGENTS.md §8).
+   */
+  public isPriceFresh(coinType: string, maxAgeMs: number = 60_000): boolean {
+    if (!coinType) return false;
+    let price = this.getPriceByCoinType(coinType);
+    if (!price) {
+      const cfg = getCoinConfigByType(coinType);
+      if (cfg) {
+        price = this.getPriceBySymbol(cfg.symbol);
+      }
+    }
+    if (!price || price.price <= 0) return false;
+    if (price.isDefaultSeed) return false;
+    return Date.now() - price.lastUpdatedMs <= maxAgeMs;
+  }
+
+  /**
+   * Check if a price is purely a static cold-start fallback seed
+   */
+  public isPriceDefaultSeed(coinType: string): boolean {
+    if (!coinType) return false;
+    let price = this.getPriceByCoinType(coinType);
+    if (!price) {
+      const cfg = getCoinConfigByType(coinType);
+      if (cfg) {
+        price = this.getPriceBySymbol(cfg.symbol);
+      }
+    }
+    return Boolean(price?.isDefaultSeed);
+  }
+
+  /**
+   * Validate that all required coin types possess fresh live oracle prices
+   */
+  public arePricesFresh(coinTypes: string[], maxAgeMs: number = 60_000): boolean {
+    return coinTypes.every((ct) => this.isPriceFresh(ct, maxAgeMs));
+  }
+
+  /**
+   * Check that all debt and collateral assets in a liquidation opportunity have fresh live prices
+   */
+  public arePricesFreshForOpportunity(
+    opportunity: {
+      debtCoinType: string;
+      collateralCoinType: string;
+      obligation: {
+        collaterals: { coinType: string }[];
+        debts: { coinType: string }[];
+      };
+    },
+    maxAgeMs: number = 60_000
+  ): boolean {
+    const coinTypes = [
+      opportunity.debtCoinType,
+      opportunity.collateralCoinType,
+      ...opportunity.obligation.collaterals.map((c) => c.coinType),
+      ...opportunity.obligation.debts.map((d) => d.coinType),
+    ];
+    const uniqueCoins = Array.from(new Set(coinTypes));
+    return this.arePricesFresh(uniqueCoins, maxAgeMs);
   }
 }
 

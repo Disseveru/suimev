@@ -127,10 +127,6 @@ async function main() {
   tx.transferObjects([collateralSuiCoin, leftoverDebtCoin, emptySuiCoin], tx.pure.address(CONFIG.operatorAddress));
 
   console.log('Simulating PTB with devInspect...');
-  const commands = (tx.getData() as any).commands || [];
-  for (let i = 40; i < commands.length; i++) {
-    console.log(`Command ${i}:`, JSON.stringify(commands[i]));
-  }
   const simResult = await suiClient.devInspectTransactionBlock({
     sender: CONFIG.operatorAddress,
     transactionBlock: tx,
@@ -139,20 +135,10 @@ async function main() {
   console.log('Simulation Status:', simResult.effects.status.status);
   if (simResult.effects.status.status === 'failure') {
     console.log(chalk.red('Error:'), simResult.effects.status.error);
-    if (simResult.results) {
-      for (let i = 45; i < simResult.results.length; i++) {
-        console.log(`Result ${i}:`, JSON.stringify(simResult.results[i]));
-      }
-    }
   } else {
     console.log(chalk.bold.green('🚀 SIMULATION SUCCESSFUL!'));
     console.log('Gas used:', simResult.effects.gasUsed);
-    console.log('Balance changes:', simResult.balanceChanges);
-    if (simResult.results) {
-      for (let i = 44; i < simResult.results.length; i++) {
-        console.log(`Result ${i}:`, JSON.stringify(simResult.results[i]));
-      }
-    }
+    console.log('Balance changes:', JSON.stringify(simResult.balanceChanges, null, 2));
   }
 }
 

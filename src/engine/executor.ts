@@ -28,11 +28,11 @@ export class TransactionExecutor {
     const debtPrice = priceCache.getPriceBySymbol(opportunity.debtSymbol);
     const colPrice = priceCache.getPriceBySymbol(opportunity.collateralSymbol);
     
-    if (debtPrice && (nowMs - debtPrice.lastUpdatedMs > MAX_AGE_MS)) {
-      throw new Error(`Oracle price for ${opportunity.debtSymbol} is older than ${MAX_AGE_MS}ms (${((nowMs - debtPrice.lastUpdatedMs)/1000).toFixed(1)}s). Aborting per AGENTS.md freshness rules.`);
+    if (!debtPrice || debtPrice.isDefaultSeed || (nowMs - debtPrice.lastUpdatedMs > MAX_AGE_MS)) {
+      throw new Error(`Oracle price for ${opportunity.debtSymbol} is unverified or static seed default. Aborting per AGENTS.md freshness rules.`);
     }
-    if (colPrice && (nowMs - colPrice.lastUpdatedMs > MAX_AGE_MS)) {
-      throw new Error(`Oracle price for ${opportunity.collateralSymbol} is older than ${MAX_AGE_MS}ms (${((nowMs - colPrice.lastUpdatedMs)/1000).toFixed(1)}s). Aborting per AGENTS.md freshness rules.`);
+    if (!colPrice || colPrice.isDefaultSeed || (nowMs - colPrice.lastUpdatedMs > MAX_AGE_MS)) {
+      throw new Error(`Oracle price for ${opportunity.collateralSymbol} is unverified or static seed default. Aborting per AGENTS.md freshness rules.`);
     }
 
     // Safety Gate: Net Profit Validation (Accounts for flash loan, DEX swap, and gas costs)
@@ -112,8 +112,8 @@ export class TransactionExecutor {
         }]);
       }
 
-      // 🏁 SEQUENTIAL FAILOVER — iterate through RPCs to bypass rate limits
-      const response = await rpcManager.executeWithFallback(
+      // 🏁 PARALLEL BROADCAST RACE — broadcast to all healthy endpoints simultaneously
+      const response = await rpcManager.executeBroadcastRace(
         'signAndExecuteTransaction',
         async (client) => {
           return await client.signAndExecuteTransaction({
@@ -138,6 +138,15 @@ export class TransactionExecutor {
       const netGasMist = BigInt(gasUsed?.computationCost || '0') + BigInt(gasUsed?.storageCost || '0') - BigInt(gasUsed?.storageRebate || '0');
       const gasUsedSui = Number(netGasMist > 0n ? netGasMist : 0n) / 1e9;
       const gasCostUsd = gasUsedSui * suiPriceUsd;
+
+      if (gasUsed?.computationCost) {
+        GasPriceOracle.recordSample({
+          timestamp: Date.now(),
+          computationUnits: BigInt(gasUsed.computationCost),
+          refGasPrice: BigInt(tx.getData().gasData.price || 1000n),
+          wasIncluded: isSuccess,
+        });
+      }
 
       const latencyMs = Date.now() - startTime;
       telemetry.recordExecution({
@@ -167,8 +176,12 @@ export class TransactionExecutor {
           '🎉 LIQUIDATION EXECUTED SUCCESSFULLY ON-CHAIN!'
         );
       } else {
+        const statusErr = response.effects?.status?.error;
+        if (gasManager.isGasObjectError(statusErr)) {
+          gasManager.handleGasError(statusErr).catch(() => {});
+        }
         logger.error(
-          { digest, status, error: response.effects?.status?.error },
+          { digest, status, error: statusErr },
           '❌ LIQUIDATION TRANSACTION FAILED ON-CHAIN'
         );
       }
@@ -184,6 +197,9 @@ export class TransactionExecutor {
         errorMessage: response.effects?.status?.error,
       };
     } catch (err) {
+      if (gasManager.isGasObjectError(err)) {
+        gasManager.handleGasError(err).catch(() => {});
+      }
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.error({ error: errorMsg }, 'Execution failed during transaction submission');
 
@@ -236,10 +252,9 @@ export class TransactionExecutor {
     // Allocate configured percentage of profit as a priority tip to validators
     const tipAllocationMist = BigInt(Math.floor(profitSui * CONFIG.priorityProfitShare * 1e9));
 
-    // Typical liquidation PTB uses ~3,500,000 computation gas units on Sui
-    // Computation cost (MIST) = units * (gasPrice / 1000)
-    // Therefore additionalGasPrice = (tipAllocationMist * 1000) / estimatedUnits
-    const estimatedComputationUnits = 3_500_000n;
+    // Dynamic Computation Units estimation:
+    // Calibrated dynamically from recent P75 devInspect / consensus execution samples (defaults to 3,500,000)
+    const estimatedComputationUnits = GasPriceOracle.getP75ComputationUnits();
     const additionalGasPrice = (tipAllocationMist * 1000n) / estimatedComputationUnits;
 
     const calculatedGasPrice = refGasPrice + additionalGasPrice;
@@ -254,6 +269,10 @@ export class TransactionExecutor {
   private static cachedRefGasPrice: bigint | null = null;
   private static lastRefGasPriceTimeMs: number = 0;
   private static cachedGasBalance: { balanceMist: bigint; balanceSui: number; lastCheckedMs: number } | null = null;
+
+  public static getCachedRefGasPriceSync(): bigint {
+    return this.cachedRefGasPrice ?? 1000n;
+  }
 
   /**
    * Cached Reference Gas Price (valid for 30s to avoid latency on execution hot path)
@@ -314,3 +333,30 @@ export class TransactionExecutor {
   }
 }
 
+export interface GasMarketSample {
+  timestamp: number;
+  computationUnits: bigint;
+  refGasPrice: bigint;
+  wasIncluded: boolean;
+}
+
+export class GasPriceOracle {
+  private static samples: GasMarketSample[] = [];
+  private static readonly SAMPLE_WINDOW = 60;
+
+  public static recordSample(sample: GasMarketSample): void {
+    this.samples.push(sample);
+    if (this.samples.length > this.SAMPLE_WINDOW) {
+      this.samples.shift();
+    }
+  }
+
+  public static getP75ComputationUnits(): bigint {
+    if (this.samples.length < 5) return 3_500_000n;
+    const sorted = [...this.samples]
+      .map((s) => s.computationUnits)
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const p75idx = Math.floor(sorted.length * 0.75);
+    return sorted[p75idx] > 0n ? sorted[p75idx] : 3_500_000n;
+  }
+}

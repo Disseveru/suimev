@@ -27,6 +27,7 @@ export interface OraclePrice {
   rawPrice: bigint;         // Raw integer price
   publishTime: number;      // Unix timestamp in seconds
   lastUpdatedMs: number;    // Local millisecond timestamp
+  isDefaultSeed?: boolean;  // True if price originated from static cold-start seed table
 }
 
 export interface CollateralPosition {

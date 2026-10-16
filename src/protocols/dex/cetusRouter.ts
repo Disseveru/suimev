@@ -117,6 +117,26 @@ export const CANONICAL_CETUS_POOLS: Record<string, CetusPoolDef> = {
     coinTypeA: '0x76cb819b01abed502bee8a702b4c2d5f5074744637f812d9047f60effa637742::fud::FUD',
     coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
   },
+  'USDC_WUSDC': {
+    poolId: '0x1efc96c99c9d91ac0f54f0ca78d2d9a6ba11377d29354c0a192c86f0495ddec7',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN',
+  },
+  'USDC_WBTC': {
+    poolId: '0xe92ee9996c49057cf2449c8c9f8d7fe52040db8229f6eb01be7d7f6bbc4fc2f3',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0x0041f9f9344cac094406562095b3f2ab758ea0ed7c4f42441c9b20757a661642::wbtc::WBTC',
+  },
+  'USDC_USDSUI': {
+    poolId: '0xa7417fb5f59e23b0a7826d78f025653823c49265be07bbf6dd9e553ba4249a56',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0x44f838219cf67b058f3b37907b655f226153c18e33dfcd0da559a844fea9b1c1::usdsui::USDSUI',
+  },
+  'USDSUI_SUI': {
+    poolId: '0x440e5e3b13b8220c5c338bb5a4291cab5c58064eaf3654c77f3e9aed5147689c',
+    coinTypeA: '0x44f838219cf67b058f3b37907b655f226153c18e33dfcd0da559a844fea9b1c1::usdsui::USDSUI',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
 };
 
 // Pre-indexed Direct Pool Map for O(1) ~20ns routing lookup
@@ -184,14 +204,14 @@ export class CetusRouter {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch('https://api-sui.cetus.zone/v2/sui/pools', {
+      const res = await fetch('https://api-sui.cetus.zone/v2/sui/stats_pools?limit=100&order_by=volume', {
         signal: controller.signal,
         headers: { Accept: 'application/json' },
       });
       clearTimeout(timer);
 
       if (!res.ok) {
-        logger.warn({ status: res.status }, 'Cetus API responded with non-200 status during dynamic pool sync');
+        logger.debug({ status: res.status }, 'Cetus external API unavailable; baseline canonical pool cache remains active');
         return Math.floor(DIRECT_POOL_MAP.size / 2);
       }
 

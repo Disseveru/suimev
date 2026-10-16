@@ -95,10 +95,14 @@ export class PythPriceService {
 
     logger.info('Starting Pyth Price Service (Alchemy On-Chain + Multi-RPC)...');
     await this.fetchLatestPrices();
+    this.refreshVaaCache().catch(() => {});
 
     this.pollInterval = setInterval(async () => {
       try {
         await this.fetchLatestPrices();
+        if (Date.now() - this.lastVaaRefreshAt > 6000) {
+          this.refreshVaaCache().catch(() => {});
+        }
       } catch (err) {
         logger.debug({ error: err }, 'Failed to refresh Pyth prices');
       }
@@ -250,10 +254,15 @@ export class PythPriceService {
     logger.debug({ error: lastError }, 'Pyth Hermes fetch attempt completed (fallback cache active)');
   }
 
+  private vaaCache: Map<string, { data: string; cachedAt: number }> = new Map();
+  private readonly VAA_CACHE_TTL_MS = 8_000;
+  private lastVaaRefreshAt = 0;
+
   /**
-   * Fetch binary VAA price update data to inject into PTB on-chain oracle refresh
+   * Refresh VAA cache for the given feed IDs (or all monitored feeds)
    */
-  public async getPriceUpdateDataForPTB(feedIds: string[]): Promise<string[]> {
+  public async refreshVaaCache(feedIds?: string[]): Promise<void> {
+    const targetIds = feedIds && feedIds.length > 0 ? feedIds : getAllPythFeedIds();
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (CONFIG.pythApiKey) {
       headers.Authorization = `Bearer ${CONFIG.pythApiKey}`;
@@ -262,26 +271,52 @@ export class PythPriceService {
     for (const endpoint of this.hermesEndpoints) {
       try {
         const url = new URL(`${endpoint.replace(/\/$/, '')}/v2/updates/price/latest`);
-        for (const id of feedIds) {
+        for (const id of targetIds) {
           url.searchParams.append('ids[]', id);
         }
         url.searchParams.set('encoding', 'base64');
         url.searchParams.set('parsed', 'false');
 
-        const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(4000) });
-
+        const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(2500) });
         if (!res.ok) continue;
 
         const data = (await res.json()) as { binary?: { data?: string[] } };
         if (data.binary && Array.isArray(data.binary.data)) {
-          return data.binary.data;
+          const now = Date.now();
+          data.binary.data.forEach((vaa, idx) => {
+            if (targetIds[idx] && vaa) {
+              this.vaaCache.set(targetIds[idx], { data: vaa, cachedAt: now });
+            }
+          });
+          this.lastVaaRefreshAt = now;
+          return;
         }
       } catch {
         continue;
       }
     }
+  }
 
-    return [];
+  /**
+   * Fetch binary VAA price update data to inject into PTB on-chain oracle refresh.
+   * Hits the local memory cache first (0ms latency), falling back to Hermes on cache miss.
+   */
+  public async getPriceUpdateDataForPTB(feedIds: string[]): Promise<string[]> {
+    const now = Date.now();
+    const cached = feedIds
+      .map((id) => this.vaaCache.get(id))
+      .filter((v) => v && now - v.cachedAt < this.VAA_CACHE_TTL_MS)
+      .map((v) => v!.data);
+
+    if (cached.length === feedIds.length && cached.length > 0) {
+      return cached;
+    }
+
+    // Cache miss or expired — refresh synchronously
+    await this.refreshVaaCache(feedIds);
+    return feedIds
+      .map((id) => this.vaaCache.get(id)?.data)
+      .filter((d): d is string => typeof d === 'string');
   }
 }
 

@@ -48,7 +48,7 @@ export class ObligationRegistry {
         { protocol: state.protocol, id: state.obligationId, hf: hf.toFixed(4), debtUsd: state.totalDebtUsd.toFixed(2), colUsd: state.totalCollateralUsd.toFixed(2) },
         `🚨 UNDERCOLLATERALIZED OBLIGATION DETECTED (HF: ${hf.toFixed(4)})`
       );
-    } else if (hf < 1.05 && state.totalDebtUsd > 0.01 && state.totalCollateralUsd > 0) {
+    } else if (hf < 1.07 && state.totalDebtUsd > 0.01 && state.totalCollateralUsd > 0) {
       this.hotWatchlist.set(key, state);
     } else {
       this.safeWatchlist.set(key, state);
@@ -75,7 +75,7 @@ export class ObligationRegistry {
   }
 
   public getImmediateTargets(): ObligationState[] {
-    return Array.from(this.immediateTargets.values());
+    return Array.from(this.immediateTargets.values()).sort((a, b) => b.totalDebtUsd - a.totalDebtUsd);
   }
 
   public getHotWatchlist(): ObligationState[] {

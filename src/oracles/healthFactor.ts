@@ -1,4 +1,4 @@
-import { CollateralPosition, DebtPosition, LiquidationOpportunity, ObligationState } from '../config/types.js';
+import { CollateralPosition, DebtPosition, DEXType, LiquidationOpportunity, ObligationState } from '../config/types.js';
 import { COIN_CONFIGS, getCoinConfigByType } from '../config/coins.js';
 import { priceCache } from './priceCache.js';
 import { CONFIG } from '../config/index.js';
@@ -94,21 +94,24 @@ export class HealthFactorEngine {
     // Search across all debt and collateral combinations to find the highest-profit valid pair
     for (const targetDebt of obligation.debts) {
       for (const targetCollateral of obligation.collaterals) {
-        // Check DEX route availability on Cetus, DeepBook, or Astros Aggregator
+        // Check DEX route availability on Cetus, DeepBook, or same-asset
         const hasCetusRoute = CetusRouter.hasPool(targetCollateral.coinType, targetDebt.coinType);
         const hasDeepBookRoute = DeepBookRouter.hasPool(targetCollateral.coinType, targetDebt.coinType);
         const isSameAsset = targetCollateral.coinType.toLowerCase() === targetDebt.coinType.toLowerCase();
 
-        // Determine best DEX (Astros Aggregator acts as universal multi-hop aggregator)
-        let selectedDex: 'cetus' | 'deepbook' | 'astros' = 'cetus';
+        // If no viable on-chain route exists to swap collateral back to debt, skip this pair
+        if (!isSameAsset && !hasCetusRoute && !hasDeepBookRoute) {
+          continue;
+        }
+
+        // Determine best DEX for on-chain execution
+        let selectedDex: DEXType = 'cetus';
         if (CONFIG.preferredDex === 'deepbook' && hasDeepBookRoute) {
           selectedDex = 'deepbook';
         } else if (hasCetusRoute) {
           selectedDex = 'cetus';
         } else if (hasDeepBookRoute) {
           selectedDex = 'deepbook';
-        } else {
-          selectedDex = 'astros';
         }
 
         const debtPrice = priceCache.getPriceUsd(targetDebt.coinType);
