@@ -266,7 +266,7 @@ export class ScallopIndexer {
             return state;
           }
         }
-
+        return null;
       } catch (err: any) {
         if (err?.code === 'NOT_FOUND' || String(err).includes('NOT_FOUND') || String(err).includes('deleted')) {
           this.knownObligationIds.delete(obligationId);
