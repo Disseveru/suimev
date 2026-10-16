@@ -199,47 +199,26 @@ export class ScallopIndexer {
 
             if (oblData.collaterals && Array.isArray(oblData.collaterals)) {
               for (const col of oblData.collaterals) {
-                const coinType = col.type;
-                const cfg = getCoinConfigByType(coinType);
-                const lowerType = coinType.toLowerCase();
-                const inferredDecimals = cfg?.decimals ?? (
-                  lowerType.includes('btc') ? 8 :
-                  lowerType.includes('eth') ? 8 :
-                  lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('usd') || lowerType.includes('deep') ? 6 : 9
-                );
-                const inferredLt = cfg?.liquidationThreshold ?? (
-                  lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('sui') || lowerType.includes('usd') ? 0.90 : 0.80
-                );
-                const parsedName = (query as any).utils?.parseCoinNameFromType?.(coinType);
-                const symbol = cfg?.symbol ?? (parsedName ? parsedName.toUpperCase() : coinType.split('::')[2]) ?? 'UNKNOWN';
+                const meta = this.inferCoinMetadata(col.type, query);
                 collaterals.push({
-                  coinType,
-                  symbol,
+                  coinType: col.type,
+                  symbol: meta.symbol,
                   amount: BigInt(col.amount ?? '0'),
-                  decimals: inferredDecimals,
+                  decimals: meta.decimals,
                   valueUsd: 0,
-                  liquidationThreshold: inferredLt,
+                  liquidationThreshold: meta.lt,
                 });
               }
             }
 
             if (oblData.debts && Array.isArray(oblData.debts)) {
               for (const d of oblData.debts) {
-                const coinType = d.type;
-                const cfg = getCoinConfigByType(coinType);
-                const lowerType = coinType.toLowerCase();
-                const inferredDecimals = cfg?.decimals ?? (
-                  lowerType.includes('btc') ? 8 :
-                  lowerType.includes('eth') ? 8 :
-                  lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('usd') || lowerType.includes('deep') ? 6 : 9
-                );
-                const parsedName = (query as any).utils?.parseCoinNameFromType?.(coinType);
-                const symbol = cfg?.symbol ?? (parsedName ? parsedName.toUpperCase() : coinType.split('::')[2]) ?? 'UNKNOWN';
+                const meta = this.inferCoinMetadata(d.type, query);
                 debts.push({
-                  coinType,
-                  symbol,
+                  coinType: d.type,
+                  symbol: meta.symbol,
                   amount: BigInt(d.amount ?? '0'),
-                  decimals: inferredDecimals,
+                  decimals: meta.decimals,
                   valueUsd: 0,
                 });
               }
@@ -250,7 +229,7 @@ export class ScallopIndexer {
             const state: ObligationState = {
               protocol: 'scallop',
               obligationId,
-              ownerAddress: obligationId,
+              ownerAddress: (oblData as any).owner ?? obligationId,
               collaterals,
               debts,
               totalCollateralUsd: 0,
@@ -264,8 +243,14 @@ export class ScallopIndexer {
             HealthFactorEngine.evaluateObligation(state);
             this.obligations.set(obligationId, state);
 
+            logger.info(`🔄 Refreshed obligation ${obligationId} with ${collaterals.length} collaterals and ${debts.length} debts`);
+
             for (const listener of this.listeners) {
-              listener(state);
+              try {
+                listener(state);
+              } catch (err) {
+                logger.debug({ err }, 'Listener error');
+              }
             }
 
             return state;
@@ -288,6 +273,37 @@ export class ScallopIndexer {
 
     this.inFlightRefreshes.set(obligationId, promise);
     return promise;
+  }
+
+  private inferCoinMetadata(coinType: string, query?: any): { symbol: string; decimals: number; lt: number } {
+    const cfg = getCoinConfigByType(coinType);
+    const lowerType = coinType.toLowerCase();
+    const decimals = cfg?.decimals ?? (
+      lowerType.includes('btc') ? 8 :
+      lowerType.includes('eth') ? 8 :
+      lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('usd') || lowerType.includes('deep') ? 6 : 9
+    );
+    const lt = cfg?.liquidationThreshold ?? (
+      lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('sui') || lowerType.includes('usd') ? 0.90 : 0.80
+    );
+    const parsedName = (query as any)?.utils?.parseCoinNameFromType?.(coinType);
+    const symbol = cfg?.symbol ?? (parsedName ? parsedName.toUpperCase() : coinType.split('::')[2]) ?? 'UNKNOWN';
+    return { symbol, decimals, lt };
+  }
+
+  public pruneStaleObligations(maxAgeMs = 10 * 60 * 1000): number {
+    const now = Date.now();
+    let count = 0;
+    for (const [id, state] of Array.from(this.obligations.entries())) {
+      if (now - state.lastUpdatedMs > maxAgeMs) {
+        this.obligations.delete(id);
+        count++;
+      }
+    }
+    if (count > 0) {
+      logger.debug(`Pruned ${count} stale Scallop obligations (> 10m old)`);
+    }
+    return count;
   }
 
   public getObligation(id: string): ObligationState | undefined {
