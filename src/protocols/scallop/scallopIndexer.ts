@@ -182,6 +182,11 @@ export class ScallopIndexer {
       return existing;
     }
 
+    const MAX_PARALLEL_REFRESHES = 15;
+    if (this.inFlightRefreshes.size >= MAX_PARALLEL_REFRESHES) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
     const promise = (async () => {
       try {
         const query = await scallopProtocol.getOrCreateQuery();
@@ -271,6 +276,8 @@ export class ScallopIndexer {
         if (err?.code === 'NOT_FOUND' || String(err).includes('NOT_FOUND') || String(err).includes('deleted')) {
           this.knownObligationIds.delete(obligationId);
           this.obligations.delete(obligationId);
+          logger.warn(`Obligation ${obligationId} pruned at ${new Date().toISOString()}`);
+          return null;
         }
         logger.debug({ obligationId, error: err }, 'Error refreshing Scallop obligation');
         return null;

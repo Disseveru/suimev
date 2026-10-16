@@ -34,6 +34,7 @@ async function main() {
   tx.setGasBudget(100_000_000n);
 
   // 2. Oracle Refresh Timing: Refresh Pyth prices before user operation
+  console.log(chalk.cyan(`🔍 Refreshing oracle for ${borrower}`));
   console.log(chalk.blue('ℹ️ Updating NAVI oracle prices via Pyth before liquidation...'));
   const poolList = await (navi as any).getPools();
   await (navi as any).updateOraclePriceBeforeUserOperationPTB(tx, borrower, poolList);
@@ -89,6 +90,7 @@ async function main() {
   });
 
   // 5. Convert seized collateral balance to Coin & Repay Flash Swap
+  console.log(chalk.magenta('💰 Flash-swap repayment initiated'));
   const collateralSuiCoin = tx.moveCall({
     target: '0x2::coin::from_balance',
     typeArguments: [suiCoinType],
@@ -161,6 +163,7 @@ async function main() {
     }
 
     console.log(chalk.bold.green('🚀 SIMULATION SUCCESSFUL!'));
+    console.log(chalk.green('✅ Liquidation completed successfully'));
 
     // 9. Gas Safety Check normalized against 10 SUI tank
     const gasUsedObj = simResult.effects.gasUsed;
