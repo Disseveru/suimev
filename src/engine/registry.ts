@@ -74,6 +74,35 @@ export class ObligationRegistry {
     return newlyUndercollateralized;
   }
 
+  /**
+   * Re-evaluates all obligations containing volatile collateral (e.g. BTC, hBTC)
+   * across both hotWatchlist and safeWatchlist.
+   * Because Bitcoin is highly volatile, rapid BTC price drops trigger cascading liquidations
+   * on loans previously deemed safe (HF >= 1.07).
+   */
+  public reevaluateVolatileCollaterals(symbolKeyword: string = 'BTC'): ObligationState[] {
+    const newlyUndercollateralized: ObligationState[] = [];
+    const allEntries = Array.from(this.obligations.entries());
+
+    for (const [key, state] of allEntries) {
+      const hasTargetCollateral = state.collaterals.some((c) => {
+        const sym = c.symbol.toUpperCase();
+        const type = c.coinType.toUpperCase();
+        return sym.includes(symbolKeyword) || type.includes(symbolKeyword);
+      });
+
+      if (hasTargetCollateral) {
+        HealthFactorEngine.evaluateObligation(state);
+        this.bucketObligation(key, state);
+        if (state.healthFactor < 1.0 && state.totalDebtUsd > 0.01 && state.totalCollateralUsd > 0) {
+          newlyUndercollateralized.push(state);
+        }
+      }
+    }
+
+    return newlyUndercollateralized;
+  }
+
   public getImmediateTargets(): ObligationState[] {
     return Array.from(this.immediateTargets.values()).sort((a, b) => b.totalDebtUsd - a.totalDebtUsd);
   }
@@ -90,13 +119,49 @@ export class ObligationRegistry {
     return Array.from(this.obligations.values());
   }
 
-  public getCounts(): { total: number; immediate: number; hot: number; safe: number } {
+  public getHotWatchlistAccounts(minHf: number = 1.00, maxHf: number = 1.05): ObligationState[] {
+    return Array.from(this.obligations.values()).filter(
+      (state) =>
+        state.healthFactor >= minHf &&
+        state.healthFactor < maxHf &&
+        state.totalDebtUsd > 0.01 &&
+        state.totalCollateralUsd > 0
+    );
+  }
+
+  public getCounts(): {
+    total: number;
+    navi: number;
+    scallop: number;
+    naviCount: number;
+    scallopCount: number;
+    immediate: number;
+    hot: number;
+    safe: number;
+  } {
+    let navi = 0;
+    let scallop = 0;
+    for (const ob of this.obligations.values()) {
+      if (ob.protocol === 'navi') navi++;
+      else if (ob.protocol === 'scallop') scallop++;
+    }
     return {
       total: this.obligations.size,
+      navi,
+      scallop,
+      naviCount: navi,
+      scallopCount: scallop,
       immediate: this.immediateTargets.size,
       hot: this.hotWatchlist.size,
       safe: this.safeWatchlist.size,
     };
+  }
+
+  public clear(): void {
+    this.obligations.clear();
+    this.immediateTargets.clear();
+    this.hotWatchlist.clear();
+    this.safeWatchlist.clear();
   }
 }
 

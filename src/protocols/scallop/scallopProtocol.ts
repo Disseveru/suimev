@@ -3,6 +3,7 @@ import { SuiClientManager } from '../../client/suiClient.js';
 import { suiGraphQL } from '../../client/graphqlClient.js';
 import { SCALLOP_CONFIG } from '../../config/constants.js';
 import { CONFIG } from '../../config/index.js';
+import { getCoinConfigByType } from '../../config/coins.js';
 import { logger } from '../../ui/logger.js';
 
 /**
@@ -48,10 +49,14 @@ export class ScallopProtocol {
 
     try {
       logger.info('Initializing Scallop SDK...');
+      const scallopRpcUrl = CONFIG.network === 'mainnet'
+        ? (CONFIG.backupRpcs.find((r) => r.includes('rpcpool') || r.includes('publicnode')) || 'https://mainnet.sui.rpcpool.com')
+        : CONFIG.rpcUrl;
+
       this.sdk = new Scallop({
         addressId: SCALLOP_CONFIG.addressId,
         network: CONFIG.network === 'mainnet' ? 'mainnet' : 'testnet',
-        fullnodeUrl: CONFIG.rpcUrl,
+        fullnodeUrl: scallopRpcUrl,
         walletAddress: CONFIG.operatorAddress,
         pythApiKey: CONFIG.pythApiKey,
       });
@@ -162,9 +167,12 @@ export class ScallopProtocol {
         ];
         const names = new Set<string>();
         for (const cType of coinTypes) {
-          const parsed = (query as any).utils?.parseCoinNameFromType?.(cType);
+          let parsed = (query as any).utils?.parseCoinNameFromType?.(cType);
+          if (!parsed) {
+            parsed = getCoinConfigByType(cType)?.scallopCoinName;
+          }
           if (parsed && typeof parsed === 'string') {
-            names.add(parsed);
+            names.add(parsed.toLowerCase());
           }
         }
         const result = Array.from(names);

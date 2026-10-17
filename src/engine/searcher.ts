@@ -16,18 +16,20 @@ import { validateSharedVersions } from '../config/constants.js';
 import { rpcManager } from '../client/suiClient.js';
 import { priceCache } from '../oracles/priceCache.js';
 import { logger } from '../ui/logger.js';
+import { telemetryBridge } from './telemetryBridge.js';
 
 /**
  * Main MEV Liquidation Searcher Daemon
  */
 export class LiquidationSearcher {
-  private isRunning = false;
+  public isRunning = false;
   private startTime = Date.now();
   private isProcessingQueue = false;
   private isTickRunning = false;
   private tickInterval: NodeJS.Timeout | null = null;
   private queue: LiquidationOpportunity[] = [];
   private inFlightObligations: Set<string> = new Set();
+  private lastOnDemandRefreshByObligation: Map<string, number> = new Map();
   private activePipelineCount = 0;
   private readonly MAX_CONCURRENT_PIPELINES = 3;
 
@@ -81,6 +83,9 @@ export class LiquidationSearcher {
     await CetusRouter.syncDynamicPools();
     CetusRouter.startDynamicSync(600_000);
 
+    // Start Telemetry Bridge Daemon immediately so dashboard has live metrics from boot
+    telemetryBridge.start(1000);
+
     // Initialize protocols
     if (CONFIG.protocols.includes('navi')) {
       await naviProtocol.initialize();
@@ -101,8 +106,8 @@ export class LiquidationSearcher {
     }
 
     // Start Pyth price feeds and register price-tick trigger
-    pythService.onPriceUpdate(() => {
-      this.handlePriceTick().catch(() => {});
+    pythService.onPriceUpdate((feedId, price, symbol) => {
+      this.handlePriceTick(feedId, price, symbol).catch(() => {});
     });
     await pythService.start(1000);
 
@@ -117,6 +122,7 @@ export class LiquidationSearcher {
 
   public stop(): void {
     this.isRunning = false;
+    telemetryBridge.stop();
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
       this.tickInterval = null;
@@ -142,12 +148,43 @@ export class LiquidationSearcher {
     }
   }
 
-  private async handlePriceTick(): Promise<void> {
+  private async handlePriceTick(feedId?: string, price?: number, symbol?: string): Promise<void> {
     if (this.isTickRunning) return;
     this.isTickRunning = true;
     try {
-      const newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
+      const isBtcUpdate =
+        symbol?.toUpperCase().includes('BTC') ||
+        feedId === '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43';
+
+      let newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
+
+      // If Bitcoin oracle updated, track volatility and scan ALL obligations holding hBTC/BTC collateral
+      // to capture cascading liquidations immediately from steep BTC price drops
+      if (isBtcUpdate) {
+        if (price !== undefined && price > 0) {
+          const { dropBps, isDrop } = priceCache.recordBtcPriceUpdate(price);
+          if (isDrop && dropBps >= 50) { // >= 0.50% drop
+            logger.warn(
+              { symbol: symbol ?? 'BTC', price, dropBps },
+              `📉 Steep BTC drop detected (-${(dropBps / 100).toFixed(2)}%) — triggering full hBTC collateral cascade sweep`
+            );
+          }
+        }
+
+        const volatileTargets = obligationRegistry.reevaluateVolatileCollaterals('BTC');
+        const existingIds = new Set(newlyUndercollateralized.map((o) => o.obligationId));
+        for (const t of volatileTargets) {
+          if (!existingIds.has(t.obligationId)) {
+            newlyUndercollateralized.push(t);
+          }
+        }
+      }
+
       if (newlyUndercollateralized.length > 0) {
+        logger.warn(
+          { count: newlyUndercollateralized.length, isBtcUpdate },
+          `🚨 Liquidation targets emerged after price update — initiating immediate processing`
+        );
         await this.processImmediateTargets();
       }
     } catch (err: any) {
@@ -190,11 +227,15 @@ export class LiquidationSearcher {
       if (opp && opp.expectedGrossProfitUsd >= CONFIG.minProfitUsd) {
         // Price Freshness & Stale Fallback Guard per audit plan & AGENTS.md §8
         if (!priceCache.arePricesFreshForOpportunity(opp)) {
-          logger.warn(
-            { borrower: target.ownerAddress, protocol: target.protocol },
-            'Opportunity references stale or unverified cold-start seed prices — triggering on-demand Pyth refresh'
-          );
-          pythService.fetchLatestPrices().catch(() => {});
+          const lastRefresh = this.lastOnDemandRefreshByObligation.get(oblId) ?? 0;
+          if (Date.now() - lastRefresh > 15_000) {
+            this.lastOnDemandRefreshByObligation.set(oblId, Date.now());
+            logger.warn(
+              { borrower: target.ownerAddress, protocol: target.protocol },
+              'Opportunity references stale or unverified cold-start seed prices — triggering on-demand Pyth refresh'
+            );
+            pythService.fetchLatestPrices().catch(() => {});
+          }
           continue;
         }
 
@@ -264,33 +305,19 @@ export class LiquidationSearcher {
       // STEP 1: Construct atomic PTB (with async oracle freshness and unlock handling)
       const builtPtb = await ZeroCapitalPtbBuilder.buildLiquidationPTBAsync(opportunity);
 
-      // STEP 2: Dual-Tier Execution: Fast-Path vs Safe-Path Simulation
-      // For high-confidence liquidations (Hf <= 0.985), bypass devInspect simulation to save ~180ms in the MEV race
-      let simulatedProfitUsd = opportunity.expectedGrossProfitUsd;
-      const isHighConfidence = opportunity.obligation.healthFactor <= 0.985 && !CONFIG.dryRun;
+      // STEP 2: Pre-Flight Simulation Guard per AGENTS.md §4 & §15
+      this.stats.totalSimulations++;
+      const simResult = await PreFlightSimulator.simulate(builtPtb.tx, opportunity);
 
-      if (isHighConfidence) {
-        logger.info(
-          { hf: opportunity.obligation.healthFactor.toFixed(4) },
-          '⚡ FAST-PATH TRIGGERED: High-confidence liquidation (Hf <= 0.985), bypassing devInspect simulation to save ~180ms'
+      if (!simResult.success || !simResult.isProfitable) {
+        logger.warn(
+          { error: simResult.errorMessage, isProfitable: simResult.isProfitable, borrower: opportunity.obligation.ownerAddress },
+          'Pre-flight simulation rejected liquidation (prevented consensus revert & gas loss)'
         );
-        this.stats.totalSimulations++;
-        this.stats.successfulSimulations++;
-      } else {
-        // Safe-Path: Pre-flight devInspect simulation for borderline opportunities
-        this.stats.totalSimulations++;
-        const simResult = await PreFlightSimulator.simulate(builtPtb.tx, opportunity);
-
-        if (!simResult.success || !simResult.isProfitable) {
-          logger.warn(
-            { error: simResult.errorMessage, isProfitable: simResult.isProfitable },
-            'Pre-flight simulation rejected liquidation'
-          );
-          return false;
-        }
-        this.stats.successfulSimulations++;
-        simulatedProfitUsd = simResult.netProfitUsd;
+        return false;
       }
+      this.stats.successfulSimulations++;
+      const simulatedProfitUsd = simResult.netProfitUsd;
 
       // STEP 3: Execute transaction via Parallel Broadcast Race
       this.stats.totalLiquidationsAttempted++;
@@ -305,6 +332,7 @@ export class LiquidationSearcher {
         this.stats.cumulativeNetProfitUsd += execResult.netProfitUsd;
         this.stats.cumulativeGasSpentSui += execResult.gasUsedSui;
         this.stats.lastLiquidationTime = execResult.timestamp;
+        telemetryBridge.exportSnapshot().catch(() => {});
         return true;
       } else {
         this.stats.failedLiquidations++;
@@ -323,6 +351,10 @@ export class LiquidationSearcher {
     } finally {
       ZeroCapitalPtbBuilder.invalidateLockCache(opportunity.obligation.obligationId);
     }
+  }
+
+  public getRecentLiquidations() {
+    return telemetryBridge.getRecentLiquidations();
   }
 }
 

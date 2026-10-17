@@ -1,11 +1,13 @@
 import { Transaction } from '@mysten/sui/transactions';
-import { LiquidationOpportunity, ExecutionResult } from '../config/types.js';
+import { LiquidationOpportunity, ExecutionResult, TelemetryRecentLiquidationItem } from '../config/types.js';
 import { rpcManager } from '../client/suiClient.js';
 import { gasManager } from '../client/gasManager.js';
 import { CONFIG } from '../config/index.js';
 import { logger } from '../ui/logger.js';
 import { priceCache } from '../oracles/priceCache.js';
 import { telemetry } from './telemetry.js';
+import { telemetryBridge } from './telemetryBridge.js';
+import { getCoinConfigBySymbol } from '../config/coins.js';
 
 /**
  * High-Performance Transaction Executor & Gas Optimizer
@@ -74,6 +76,19 @@ export class TransactionExecutor {
         },
         '🛡️ DRY-RUN SUCCESS: Liquidation validated without on-chain broadcast'
       );
+
+      const event: TelemetryRecentLiquidationItem = {
+        timestamp: new Date().toISOString(),
+        protocol: opportunity.protocol,
+        borrower: opportunity.obligation.ownerAddress,
+        debtRepaid: this.formatCoinAmount(opportunity.debtAmountToRepay, opportunity.debtSymbol),
+        collateralSeized: this.formatCoinAmount(opportunity.collateralToReceive, opportunity.collateralSymbol),
+        netProfitUsd: Number(netProfitUsd.toFixed(2)),
+        gasCostSui: 0.005,
+        txDigest: mockDigest,
+        txDigestLink: `https://suiscan.xyz/mainnet/tx/${mockDigest}`,
+      };
+      telemetryBridge.recordLiquidation(event);
 
       return {
         digest: mockDigest,
@@ -175,6 +190,18 @@ export class TransactionExecutor {
           { digest, latencyMs, netProfitUsd: netProfitUsd.toFixed(2) },
           '🎉 LIQUIDATION EXECUTED SUCCESSFULLY ON-CHAIN!'
         );
+        const event: TelemetryRecentLiquidationItem = {
+          timestamp: new Date().toISOString(),
+          protocol: opportunity.protocol,
+          borrower: opportunity.obligation.ownerAddress,
+          debtRepaid: this.formatCoinAmount(opportunity.debtAmountToRepay, opportunity.debtSymbol),
+          collateralSeized: this.formatCoinAmount(opportunity.collateralToReceive, opportunity.collateralSymbol),
+          netProfitUsd: Number(netProfitUsd.toFixed(2)),
+          gasCostSui: Number(gasUsedSui.toFixed(4)),
+          txDigest: digest,
+          txDigestLink: `https://suiscan.xyz/mainnet/tx/${digest}`,
+        };
+        telemetryBridge.recordLiquidation(event);
       } else {
         const statusErr = response.effects?.status?.error;
         if (gasManager.isGasObjectError(statusErr)) {
@@ -330,6 +357,21 @@ export class TransactionExecutor {
     } catch {
       return { balanceMist: 0n, balanceSui: 0, isSufficient: false };
     }
+  }
+
+  public static formatCoinAmount(amountRaw: bigint, symbol: string): string {
+    const cfg = getCoinConfigBySymbol(symbol);
+    const decimals = cfg?.decimals ?? 9;
+    const num = Number(amountRaw) / Math.pow(10, decimals);
+    return `${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })} ${symbol}`;
+  }
+
+  public static recordLiquidation(event: TelemetryRecentLiquidationItem): void {
+    telemetryBridge.recordLiquidation(event);
+  }
+
+  public static getRecentLiquidations(): TelemetryRecentLiquidationItem[] {
+    return telemetryBridge.getRecentLiquidations();
   }
 }
 

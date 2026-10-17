@@ -77,6 +77,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     decimals: 8,
     coinType: '0xd0e89b2af5e4910726fbcd8b8dd37bb79b29e5f83f7491bca830e94f7f226d29::eth::ETH',
     pythPriceFeedId: '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace',
+    naviPoolId: 11,
     scallopCoinName: 'sbeth',
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
@@ -87,6 +88,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     decimals: 8,
     coinType: '0xb7844e289a8410e50fb3ca48d69eb9cf29e27d223ef90353fe1bd8e27ff8f3f8::coin::COIN',
     pythPriceFeedId: '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
+    naviPoolId: 22,
     scallopCoinName: 'wsol',
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
@@ -97,6 +99,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     decimals: 6,
     coinType: '0xf16e6b723f242ec745dfd7634ad072c42d5c1d9ac9d62a39c381303eaa57693a::fdusd::FDUSD',
     pythPriceFeedId: '0x425a812df08e9eb376aa5db944d56d95856eb28114fef6d2fc57a22026fa8087',
+    naviPoolId: 16,
     scallopCoinName: 'fdusd',
     liquidationThreshold: 0.90,
     liquidationBonus: 0.05,
@@ -128,6 +131,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     decimals: 8,
     coinType: '0xaafb102dd0902f5055cadecd687fb5b71ca82ef0e0285d90afde828ec58ca96b::btc::BTC',
     pythPriceFeedId: '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43',
+    naviPoolId: 21,
     scallopCoinName: 'sbwbtc',
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
@@ -193,6 +197,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     coinType: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
     // Verified Pyth WAL/USD feed ID on Sui mainnet
     pythPriceFeedId: '0x9b77ff3b3b44c6f9e9e42e0fbeedf5a62b88d71e64e2f91f9fae3e8f1e5c5d2d4',
+    naviPoolId: 24,
     scallopCoinName: 'wal',
     liquidationThreshold: 0.70,
     liquidationBonus: 0.08,
@@ -203,6 +208,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     decimals: 6,
     coinType: '0x960b531667636f39e85867775f52f6b1f220a058c4de786905bdf761e06a56bb::usdy::USDY',
     pythPriceFeedId: '0xe3d1723999820435ebab53003a542ff26847720692af92523eea613a9a28d500',
+    naviPoolId: 12,
     scallopCoinName: 'usdy',
     liquidationThreshold: 0.85,
     liquidationBonus: 0.05,
@@ -214,6 +220,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     coinType: '0x44f838219cf67b058f3b37907b655f226153c18e33dfcd0da559a844fea9b1c1::usdsui::USDSUI',
     // No verified Pyth price feed for USDSUI — poll-excluded; treat as $1 stablecoin via cache seed
     pythPriceFeedId: '',
+    naviPoolId: 34,
     scallopCoinName: 'usdsui',
     liquidationThreshold: 0.85,
     liquidationBonus: 0.05,
@@ -233,9 +240,9 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'AFSUI',
     name: 'Aftermath Staked SUI',
     decimals: 9,
-    coinType: '0xf325ce1300e8dac124071d3152f5643a60190dac42454b4249a55787f0b83e0e::afsui::AFSUI',
-    // No verified Pyth price feed for AFSUI — poll-excluded; price proxied via SUI price × exchange rate
-    pythPriceFeedId: '',
+    coinType: '0xf325ce1300e8dac124071d3152c5c5ee6174914f8bc2161e88329cf579246efc::afsui::AFSUI',
+    // Verified Pyth AFSUI/SUI redemption rate feed ID on Sui mainnet
+    pythPriceFeedId: '0x974a4829f908c76ceb05bfee180f95f445122d465a64a6b302c1a9251b7e19fc',
     scallopCoinName: 'afsui',
     liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
@@ -246,7 +253,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     decimals: 9,
     coinType: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK',
     pythPriceFeedId: '0x15addb7250489721752834b6b158019ab27dfbc6e17424ef244837492c286a59',
-    naviPoolId: 14,
+    naviPoolId: 18,
     scallopCoinName: 'buck',
     liquidationThreshold: 0.90,
     liquidationBonus: 0.05,
@@ -255,32 +262,63 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'AUSD',
     name: 'Agora USD',
     decimals: 6,
-    coinType: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2abda49b5c802863f6d38e::ausd::AUSD',
-    pythPriceFeedId: '0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a',
-    naviPoolId: 21,
+    coinType: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14df2ff2::ausd::AUSD',
+    pythPriceFeedId: '0xd9912df360b5b7f21a122f15bdd5e27f62ce5e72bd316c291f7c86620e07fb2a',
+    naviPoolId: 9,
     scallopCoinName: 'ausd',
     liquidationThreshold: 0.90,
+    liquidationBonus: 0.05,
+  },
+  LBTC: {
+    symbol: 'LBTC',
+    name: 'Lombard Staked Bitcoin',
+    decimals: 8,
+    coinType: '0x3e8e9423d80e1774a7ca128fccd8bf5f1f7753be658c5e645929037f7c819040::lbtc::LBTC',
+    pythPriceFeedId: '0x8f257aab6e7698bb92b15511915e593d6f8eae914452f781874754b03d0c612b',
+    naviPoolId: 23,
+    scallopCoinName: 'lbtc',
+    liquidationThreshold: 0.80,
+    liquidationBonus: 0.05,
+  },
+  HBTC: {
+    symbol: 'HBTC',
+    name: 'Hashi Bitcoin',
+    decimals: 8,
+    coinType: '0xa877d4d97b6a8bae1da982a84980c502c5ad2ead4b24e6c8e50c57cd6ddc3771::btc::BTC',
+    pythPriceFeedId: '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43',
+    scallopCoinName: 'hbtc',
+    liquidationThreshold: 0.80,
+    liquidationBonus: 0.05,
+  },
+  XBTC: {
+    symbol: 'xBTC',
+    name: 'xBTC (NAVI)',
+    decimals: 8,
+    coinType: '0x876a4b7bce8aeaef60464c11f4026903e9afacab79b9b142686158aa86560b50::xbtc::XBTC',
+    pythPriceFeedId: '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43',
+    naviPoolId: 26,
+    scallopCoinName: 'xbtc',
+    liquidationThreshold: 0.80,
     liquidationBonus: 0.05,
   },
   NS: {
     symbol: 'NS',
     name: 'SuiNS Token',
     decimals: 6,
-    coinType: '0x5145494a5f5100e64540b0aa69f194e9504863642a4336a5ea23821e5faab34b::ns::NS',
-    pythPriceFeedId: '0x29bdd5248234e33bd93d3b81100b5fa32eaa5997843847e2c2cb16d7c6d9f7ff',
-    naviPoolId: 17,
+    coinType: '0x5145494a5f5100e645e4b0aa950fa6b68f614e8c59e17bc5ded3495123a79178::ns::NS',
+    pythPriceFeedId: '0xbb5ff26e47a3a6cc7ec2fce1db996c2a145300edc5acaabe43bf9ff7c5dd5d32',
+    naviPoolId: 13,
     scallopCoinName: 'ns',
     liquidationThreshold: 0.70,
     liquidationBonus: 0.08,
   },
-  SSUI: {
-    symbol: 'sSUI',
-    name: 'Spring Staked SUI',
+  STSUI: {
+    symbol: 'stSUI',
+    name: 'AlphaFi Staked SUI',
     decimals: 9,
-    coinType: '0x83556891f4a0f233ce7b05eae7d4c844f1190730da695a366492323972224102::spring_sui::SPRING_SUI',
-    pythPriceFeedId: '',
-    naviPoolId: 22,
-    scallopCoinName: 'ssui',
+    coinType: '0xd1b72982e40348d069bb1ff701e634c117bb5f741f44dff91e472d3b01461e55::stsui::STSUI',
+    pythPriceFeedId: '0x438f22e84704b6b694b1a45050f28fb898687a7d18fe58e5f2b6045a8f081414',
+    naviPoolId: 20,
     liquidationThreshold: 0.85,
     liquidationBonus: 0.05,
   },
@@ -288,9 +326,8 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'BLUB',
     name: 'Blub Token',
     decimals: 2,
-    coinType: '0xfa7ff699e97e1825438810deea99f38f3cb7502c971514b3d716437af364b9e9::blub::BLUB',
+    coinType: '0xfa7ac3951fdca92c5200d468d31a365eb03b2be9936fde615e69f0c1274ad3a0::BLUB::BLUB',
     pythPriceFeedId: '',
-    naviPoolId: 25,
     scallopCoinName: 'blub',
     liquidationThreshold: 0.60,
     liquidationBonus: 0.10,
@@ -299,9 +336,8 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'FUD',
     name: 'Fud the Pug',
     decimals: 5,
-    coinType: '0x76cb819b01abed502bee8a702b4c2d5427320485aa2310f5671d6d13ec3079b7::fud::FUD',
+    coinType: '0x76cb819b01abed502bee8a702b4c2d547532c12f25001c9dea795a5e631c26f1::fud::FUD',
     pythPriceFeedId: '',
-    naviPoolId: 26,
     scallopCoinName: 'fud',
     liquidationThreshold: 0.60,
     liquidationBonus: 0.10,
@@ -310,7 +346,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'IKA',
     name: 'Ika Token',
     decimals: 9,
-    coinType: '0x6d9e44ea883f395642d4a667ec36cb488661ea242b58dcf4db9e31d42a6ff79a::ika::IKA',
+    coinType: '0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa::ika::IKA',
     pythPriceFeedId: '',
     naviPoolId: 27,
     scallopCoinName: 'ika',
@@ -321,7 +357,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'SCA_SUI',
     name: 'Scallop Staked SUI',
     decimals: 9,
-    coinType: '0xda07ecf4591a0c4f82be82ffab417b738cfb46fca04724948a332ea51dcbff89::sca_sui::SCA_SUI',
+    coinType: '0xda008a552a2d6a9566fa6204255d55ab32ce00f23e307145dec2644cf83336b2::sca_sui::SCA_SUI',
     // No verified Pyth price feed for SCA_SUI — poll-excluded; price proxied via SUI price
     pythPriceFeedId: '',
     scallopCoinName: 'scasui',
@@ -335,7 +371,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
  */
 const COIN_BY_TYPE_MAP = new Map<string, CoinMetadataConfig>();
 const COIN_BY_SYMBOL_MAP = new Map<string, CoinMetadataConfig>();
-const COIN_BY_PYTH_ID_MAP = new Map<string, CoinMetadataConfig>();
+const COIN_BY_PYTH_ID_MAP = new Map<string, CoinMetadataConfig[]>();
 
 const normalizedTagCache = new Map<string, string>();
 
@@ -369,7 +405,54 @@ for (const config of Object.values(COIN_CONFIGS)) {
   COIN_BY_SYMBOL_MAP.set(config.symbol.toUpperCase(), config);
   // Only register Pyth ID if it's a valid non-empty feed ID
   if (config.pythPriceFeedId) {
-    COIN_BY_PYTH_ID_MAP.set(config.pythPriceFeedId.toLowerCase(), config);
+    const key = config.pythPriceFeedId.toLowerCase();
+    const existing = COIN_BY_PYTH_ID_MAP.get(key) || [];
+    if (!existing.includes(config)) {
+      existing.push(config);
+    }
+    COIN_BY_PYTH_ID_MAP.set(key, existing);
+  }
+}
+
+// Explicit symbol aliases to guarantee clean lookup for tokens with multiple common names/casings
+if (COIN_CONFIGS.NAVI) {
+  COIN_BY_SYMBOL_MAP.set('NAVX', COIN_CONFIGS.NAVI);
+  COIN_CONFIGS.NAVX = COIN_CONFIGS.NAVI;
+}
+if (COIN_CONFIGS.HASUI) {
+  COIN_BY_SYMBOL_MAP.set('HASUI', COIN_CONFIGS.HASUI);
+  COIN_CONFIGS.haSUI = COIN_CONFIGS.HASUI;
+}
+if (COIN_CONFIGS.AFSUI) {
+  COIN_BY_SYMBOL_MAP.set('AFSUI', COIN_CONFIGS.AFSUI);
+  COIN_CONFIGS.afSUI = COIN_CONFIGS.AFSUI;
+}
+if (COIN_CONFIGS.CERT) {
+  COIN_BY_SYMBOL_MAP.set('CERT', COIN_CONFIGS.CERT);
+  COIN_BY_SYMBOL_MAP.set('VSUI', COIN_CONFIGS.CERT);
+  COIN_CONFIGS.vSUI = COIN_CONFIGS.CERT;
+}
+if (COIN_CONFIGS.HBTC) {
+  COIN_BY_SYMBOL_MAP.set('HBTC', COIN_CONFIGS.HBTC);
+  COIN_BY_SYMBOL_MAP.set('hBTC', COIN_CONFIGS.HBTC);
+  COIN_CONFIGS.hBTC = COIN_CONFIGS.HBTC;
+}
+
+// Register on-chain Pyth PriceInfo object IDs for reverse lookup compatibility
+const PYTH_OBJECT_ALIASES: Record<string, CoinMetadataConfig> = {
+  '0xfaec36b7b45f96ed1b949ed45758dfa73d071f48509e550eec41ad3cfa00d1bd': COIN_CONFIGS.AUSD,
+  '0x9eaebfc21b14ea517575097e7787fe73ab92113525d7ad9acce983a2ae2570dc': COIN_CONFIGS.LBTC,
+  '0xea0d962a2b2cb35bbc262514ea6cfed02fdb3d5bedb193ca0d50bfefc98abebc': COIN_CONFIGS.NS,
+  '0xe64832d1b4c9a75139a7313aee69da891297d8397fda2863b5bdcc4af0b79758': COIN_CONFIGS.HBTC,
+};
+for (const [objId, cfg] of Object.entries(PYTH_OBJECT_ALIASES)) {
+  if (cfg) {
+    const key = objId.toLowerCase();
+    const existing = COIN_BY_PYTH_ID_MAP.get(key) || [];
+    if (!existing.includes(cfg)) {
+      existing.push(cfg);
+    }
+    COIN_BY_PYTH_ID_MAP.set(key, existing);
   }
 }
 
@@ -386,6 +469,7 @@ export function getCoinConfigByType(coinType: string): CoinMetadataConfig | unde
       return COIN_BY_SYMBOL_MAP.get(structName);
     }
     if (structName === 'ETH' && COIN_BY_SYMBOL_MAP.has('WETH')) return COIN_BY_SYMBOL_MAP.get('WETH');
+    if ((structName === 'HBTC' || structName === 'BTC') && COIN_BY_SYMBOL_MAP.has('HBTC')) return COIN_BY_SYMBOL_MAP.get('HBTC');
     if (structName === 'BTC' && COIN_BY_SYMBOL_MAP.has('WBTC')) return COIN_BY_SYMBOL_MAP.get('WBTC');
     if (structName.includes('USDT') && COIN_BY_SYMBOL_MAP.has('USDT')) return COIN_BY_SYMBOL_MAP.get('USDT');
     if (structName.includes('USDC') && COIN_BY_SYMBOL_MAP.has('USDC')) return COIN_BY_SYMBOL_MAP.get('USDC');
@@ -399,15 +483,26 @@ export function getCoinConfigBySymbol(symbol: string): CoinMetadataConfig | unde
 }
 
 export function getCoinConfigByPythId(pythId: string): CoinMetadataConfig | undefined {
-  return COIN_BY_PYTH_ID_MAP.get(pythId.toLowerCase());
+  if (!pythId) return undefined;
+  const list = COIN_BY_PYTH_ID_MAP.get(pythId.toLowerCase());
+  return list && list.length > 0 ? list[0] : undefined;
+}
+
+export function getCoinConfigsByPythId(pythId: string): CoinMetadataConfig[] {
+  if (!pythId) return [];
+  return COIN_BY_PYTH_ID_MAP.get(pythId.toLowerCase()) || [];
 }
 
 export function getAllMonitoredCoinTypes(): string[] {
-  return Object.values(COIN_CONFIGS).map((c) => c.coinType);
+  return Array.from(new Set(Object.values(COIN_CONFIGS).map((c) => c.coinType)));
 }
 
 export function getAllPythFeedIds(): string[] {
-  return Object.values(COIN_CONFIGS)
-    .map((c) => c.pythPriceFeedId)
-    .filter(Boolean);
+  return Array.from(
+    new Set(
+      Object.values(COIN_CONFIGS)
+        .map((c) => c.pythPriceFeedId)
+        .filter(Boolean)
+    )
+  );
 }

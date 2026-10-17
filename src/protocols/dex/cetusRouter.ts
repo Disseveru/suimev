@@ -93,28 +93,68 @@ export const CANONICAL_CETUS_POOLS: Record<string, CetusPoolDef> = {
     coinTypeB: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
   },
   'BUCK_USDC': {
-    poolId: '0x6ec881313f166e714f52a78c187d90d7966ef4a378efbfa98e3b5e90a618be24',
-    coinTypeA: '0xce7ffda7a8c4f9a35d94e223d6a4a6b2512f7a08b5e28e67f0b5d0c07b6cb0d8::buck::BUCK',
-    coinTypeB: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    poolId: '0x4c50ba9d1e60d229800293a4222851c9c3f797aa5ba8a8d32cc67ec7e79fec60',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK',
+  },
+  'USDC_BUCK': {
+    poolId: '0x4c50ba9d1e60d229800293a4222851c9c3f797aa5ba8a8d32cc67ec7e79fec60',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK',
+  },
+  'BUCK_SUI': {
+    poolId: '0x59cf0d333464ad29443d92bfd2ddfd1f794c5830141a5ee4a815d1ef3395bf6c',
+    coinTypeA: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'USDC_AUSD': {
+    poolId: '0x0fea99ed9c65068638963a81587c3b8cafb71dc38c545319f008f7e9feb2b5f8',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14df2ff2::ausd::AUSD',
   },
   'AUSD_USDC': {
-    poolId: '0x0f90e9e900c3b0eb23180de07d5705a6104bc1ec96ea10c4f8ebec48c089c894',
-    coinTypeA: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2abda22b25c3bd51b65e76::ausd::AUSD',
-    coinTypeB: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    poolId: '0x0fea99ed9c65068638963a81587c3b8cafb71dc38c545319f008f7e9feb2b5f8',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14df2ff2::ausd::AUSD',
+  },
+  'AUSD_SUI': {
+    poolId: '0x4811c1f0cc996e1b8f5befbf91fe4652bd6ff79115f09391ba157b21820fc9c0',
+    coinTypeA: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14df2ff2::ausd::AUSD',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'LBTC_SUI': {
+    poolId: '0x2fc6ee9183d0f1ca0d2dded02c416be6f4671bb82db55c26ce12b536812a4b8e',
+    coinTypeA: '0x3e8e9423d80e1774a7ca128fccd8bf5f1f7753be658c5e645929037f7c819040::lbtc::LBTC',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
   },
   'NS_SUI': {
-    poolId: '0x3565b9bb765b214f4da6ec82121305bb9930f711200fa4f75747cb9b867c4692',
-    coinTypeA: '0x5145494a5f5100e64540b1a052d5bf52327702d8471b425cb43e67db57936ac0::ns::NS',
+    poolId: '0x763f63cbada3a932c46972c6c6dcf1abd8a9a73331908a1d7ef24c2232d85520',
+    coinTypeA: '0x5145494a5f5100e645e4b0aa950fa6b68f614e8c59e17bc5ded3495123a79178::ns::NS',
     coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
   },
-  'SSUI_SUI': {
-    poolId: '0xb4b6a7ee7b60f157778b021d7b328153cfc900e576ec5a6439bf244b76a0f443',
-    coinTypeA: '0xd9e6e44f53535914d9b62649ef9066eb4b143715ff2f4ce8e4e9cfb5b9c03b1e::ssui::SSUI',
+  'AFSUI_SUI': {
+    poolId: '0xa528b26eae41bcfca488a9feaa3dca614b2a1d9b9b5c78c256918ced051d4c50',
+    coinTypeA: '0xf325ce1300e8dac124071d3152c5c5ee6174914f8bc2161e88329cf579246efc::afsui::AFSUI',
     coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'SCA_SUI': {
+    poolId: '0x9661cca01a5b9b3536883568fa967a2943e237de11a97976795f5adb293892e9',
+    coinTypeA: '0x7016aae72cfc67f2fadf55769c0a7dd54291a583b63051a5ed71081cce836ac6::sca::SCA',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'IKA_SUI': {
+    poolId: '0x8a7632cbbab48b9e4a1bc736580366f0b8c1164724f5990eebdfbe504fbcd83b',
+    coinTypeA: '0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa::ika::IKA',
+    coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+  },
+  'USDC_IKA': {
+    poolId: '0xa59826d4bf5064ff955f9b14c2b46707477aa1c4a0d7daa2d5a40c25cd22a877',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa::ika::IKA',
   },
   'FUD_SUI': {
-    poolId: '0xc5d3c8c7efcc51cbab207612f1dbb1fb3a1bdfd924dd1804d9c0e5a87be758f8',
-    coinTypeA: '0x76cb819b01abed502bee8a702b4c2d5f5074744637f812d9047f60effa637742::fud::FUD',
+    poolId: '0xfc6a11998f1acf1dd55acb58acd7716564049cfd5fd95e754b0b4fe9444f4c9d',
+    coinTypeA: '0x76cb819b01abed502bee8a702b4c2d547532c12f25001c9dea795a5e631c26f1::fud::FUD',
     coinTypeB: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
   },
   'USDC_WUSDC': {
@@ -126,6 +166,11 @@ export const CANONICAL_CETUS_POOLS: Record<string, CetusPoolDef> = {
     poolId: '0xe92ee9996c49057cf2449c8c9f8d7fe52040db8229f6eb01be7d7f6bbc4fc2f3',
     coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
     coinTypeB: '0x0041f9f9344cac094406562095b3f2ab758ea0ed7c4f42441c9b20757a661642::wbtc::WBTC',
+  },
+  'USDC_HBTC': {
+    poolId: '0xe92ee9996c49057cf2449c8c9f8d7fe52040db8229f6eb01be7d7f6bbc4fc2f3',
+    coinTypeA: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+    coinTypeB: '0xa877d4d97b6a8bae1da982a84980c502c5ad2ead4b24e6c8e50c57cd6ddc3771::btc::BTC',
   },
   'USDC_USDSUI': {
     poolId: '0xa7417fb5f59e23b0a7826d78f025653823c49265be07bbf6dd9e553ba4249a56',
@@ -201,14 +246,13 @@ export class CetusRouter {
    * Fetch all active Cetus pools directly from Cetus API/SDK and index them into memory
    */
   public static async syncDynamicPools(): Promise<number> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch('https://api-sui.cetus.zone/v2/sui/stats_pools?limit=100&order_by=volume', {
+      const res = await fetch('https://api-sui.cetus.zone/v2/sui/stats_pools?limit=100', {
         signal: controller.signal,
         headers: { Accept: 'application/json' },
       });
-      clearTimeout(timer);
 
       if (!res.ok) {
         logger.debug({ status: res.status }, 'Cetus external API unavailable; baseline canonical pool cache remains active');
@@ -216,16 +260,18 @@ export class CetusRouter {
       }
 
       const body = (await res.json()) as any;
-      const pools = body?.data?.lp_list || body?.data?.pools || [];
+      const pools = body?.data?.lp_list || body?.data?.pools || (Array.isArray(body?.data) ? body.data : []);
       let registered = 0;
 
-      for (const pool of pools) {
-        const poolId = pool.address || pool.pool_address || pool.poolId;
-        const coinA = pool.coin_a_address || pool.coin_type_a || pool.coinA;
-        const coinB = pool.coin_b_address || pool.coin_type_b || pool.coinB;
-        if (poolId && coinA && coinB) {
-          this.registerPool(poolId, coinA, coinB);
-          registered++;
+      if (Array.isArray(pools)) {
+        for (const pool of pools) {
+          const poolId = pool.address || pool.pool_address || pool.poolId;
+          const coinA = pool.coin_a_address || pool.coin_type_a || pool.coinA;
+          const coinB = pool.coin_b_address || pool.coin_type_b || pool.coinB;
+          if (poolId && coinA && coinB) {
+            this.registerPool(poolId, coinA, coinB);
+            registered++;
+          }
         }
       }
 
@@ -240,6 +286,8 @@ export class CetusRouter {
         'Dynamic Cetus pool sync deferred; baseline canonical pool cache remains active'
       );
       return Math.floor(DIRECT_POOL_MAP.size / 2);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -252,6 +300,17 @@ export class CetusRouter {
         logger.warn({ error: err?.message || String(err) }, 'Background Cetus pool sync failed');
       });
     }, intervalMs);
+  }
+
+  /**
+   * Return array of all currently registered Cetus pool IDs
+   */
+  public static getAvailablePools(): string[] {
+    const poolIds = new Set<string>();
+    for (const entry of DIRECT_POOL_MAP.values()) {
+      poolIds.add(entry.poolId);
+    }
+    return Array.from(poolIds);
   }
 
   /**
@@ -363,6 +422,13 @@ export class CetusRouter {
   }
 
   /**
+   * Clamp slippage tolerance to valid range [0, 10000] bps (0% to 100%)
+   */
+  public static clampSlippage(slippageBps: number): number {
+    return Math.min(10000, Math.max(0, slippageBps));
+  }
+
+  /**
    * Add Cetus atomic CLMM swap to PTB (handles direct and 2-hop routed swaps)
    */
   public static addSwap(
@@ -370,6 +436,14 @@ export class CetusRouter {
     quote: SwapQuote,
     inputCoin: TransactionObjectArgument
   ): TransactionObjectArgument {
+    // Clamp slippage tolerance to max 10,000 bps (100%) so minimumAmountOut never becomes negative on-chain
+    if (quote.minimumAmountOut < 0n) {
+      quote.minimumAmountOut = 0n;
+    }
+    if (quote.slippageBps > 10000) {
+      quote.slippageBps = 10000;
+    }
+
     if (quote.poolId === '2-hop-via-sui' || quote.poolId === '2-hop-via-usdc') {
       const hopToken = quote.poolId === '2-hop-via-sui' ? SUI_TOKEN : USDC_TOKEN;
       const halfSlippage = Math.max(25, Math.floor(quote.slippageBps / 2));

@@ -178,8 +178,8 @@ export class ZeroCapitalPtbBuilder {
       loanCoin = naviLoan.loanCoin;
       receipt = naviLoan.receipt;
 
-      // Liquidate NAVI borrower
-      const [receivedCol, leftoverDebt] = NaviPtbBuilder.addLiquidate(
+      // Liquidate NAVI borrower using raw Balance<T>
+      const [colBal, leftoverDebtBal] = NaviPtbBuilder.addLiquidateBalances(
         tx,
         debtCoinType,
         debtPool.id,
@@ -190,8 +190,16 @@ export class ZeroCapitalPtbBuilder {
         colPool.poolContract,
         opportunity.obligation.ownerAddress
       );
-      collateralCoin = receivedCol;
-      leftoverDebtCoin = leftoverDebt;
+      collateralCoin = tx.moveCall({
+        target: '0x2::coin::from_balance',
+        arguments: [colBal],
+        typeArguments: [collateralCoinType],
+      });
+      leftoverDebtCoin = tx.moveCall({
+        target: '0x2::coin::from_balance',
+        arguments: [leftoverDebtBal],
+        typeArguments: [debtCoinType],
+      });
     } else {
       // Scallop Protocol
       if (opportunity.obligation.liquidateLocked) {
@@ -373,10 +381,13 @@ export class ZeroCapitalPtbBuilder {
         exactCoinNames.add(opportunity.debtSymbol.toLowerCase());
         exactCoinNames.add(opportunity.collateralSymbol.toLowerCase());
 
-        // If local positions didn't resolve names, fall back to cached getObligationCoinNames
-        if (exactCoinNames.size <= 2) {
+        // Always merge dynamic coin names from the obligation on-chain (cached with TTL)
+        // to guarantee that ALL collateral and debt assets are refreshed in xOracle (AGENTS.md §8.2)
+        try {
           const dynamicCoinNames = await scallopProtocol.getObligationCoinNames(oblId);
           dynamicCoinNames.forEach((n) => exactCoinNames.add(n));
+        } catch (e) {
+          logger.debug({ error: e, oblId }, 'Could not fetch dynamic obligation coin names');
         }
 
         const filteredCoins = Array.from(exactCoinNames).filter(c => c !== 'coin' && c !== 'unknown');
@@ -410,6 +421,10 @@ export class ZeroCapitalPtbBuilder {
 
         return this.buildLiquidationPTB(opportunity, scallopTx.txBlock);
       } catch (err: any) {
+        if (err?.message?.includes('Abort 2 Guard')) {
+          // Do not attempt to liquidate healthy accounts; rethrow to prevent broadcasting unexecutable PTBs
+          throw err;
+        }
         logger.error({ error: err?.message || err, stack: err?.stack }, 'Scallop SDK builder threw error in buildLiquidationPTBAsync');
         // Fall back to direct assembly if SDK builder fails
         const tx = new Transaction();
