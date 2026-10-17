@@ -21,9 +21,18 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
 
-    - name: Sui Engine - Install and Test
-      run: |
-        npm install
-        npm run audit:types
-        npm test
+    - name: Sui Engine - Install Dependencies
+      run: npm install
+
+    - name: TypeScript Strict Compilation Audit
+      run: npm run audit:types
+
+    - name: Static Performance Anti-Pattern Scanner
+      run: npm run perf:detect
+
+    - name: Automated Micro-Benchmarks & P95 Latency Threshold Gates
+      run: npm run benchmark:ci
+
+    - name: Full Test Matrix & Adversarial Stress Suites
+      run: npx vitest run --fileParallelism=false
 
