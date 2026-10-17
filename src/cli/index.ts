@@ -13,6 +13,9 @@ import { HealthFactorEngine } from '../oracles/healthFactor.js';
 import { ZeroCapitalPtbBuilder } from '../engine/ptbBuilder.js';
 import { PreFlightSimulator } from '../engine/simulator.js';
 import { TransactionExecutor } from '../engine/executor.js';
+import { Transaction } from '@mysten/sui/transactions';
+import { rpcManager } from '../client/suiClient.js';
+import { gasManager } from '../client/gasManager.js';
 import { ObligationState } from '../config/types.js';
 
 const command = process.argv[2] || 'start';
@@ -444,8 +447,49 @@ async function main() {
       process.exit(sim.success ? 0 : 1);
     }
 
+    case 'split-gas': {
+      console.log(chalk.bold.cyan('\n⛽ Initiating Multi-Coin Gas Splitter...'));
+      const operator = CONFIG.operatorAddress;
+      const coins = await rpcManager.executeWithFallback('getCoins', (c) =>
+        c.getCoins({ owner: operator, coinType: '0x2::sui::SUI' })
+      );
+      const totalBalanceMist = coins.data.reduce((sum, c) => sum + BigInt(c.balance), 0n);
+      const totalBalanceSui = Number(totalBalanceMist) / 1e9;
+      console.log(`Current Wallet Balance: ${chalk.bold.green(totalBalanceSui.toFixed(4) + ' SUI')}`);
+      console.log(`Active Gas Coins: ${chalk.bold.yellow(coins.data.length.toString())}`);
+
+      if (totalBalanceSui < 0.1) {
+        console.log(chalk.yellow('⚠️ Balance is under 0.1 SUI. Please deposit at least 0.5–2.0 SUI before splitting gas coins.'));
+        process.exit(0);
+      }
+
+      const healthyCoins = coins.data.filter((c) => BigInt(c.balance) >= 50_000_000n);
+      if (healthyCoins.length >= 3) {
+        console.log(chalk.green(`✅ Wallet already has ${healthyCoins.length} gas coins with >= 0.05 SUI each. Ready for concurrent execution!`));
+        process.exit(0);
+      }
+
+      console.log(chalk.cyan('Splitting gas into 3 dedicated operational coins (0.05 SUI each) for parallel MEV execution...'));
+      const tx = new Transaction();
+      const [c1, c2, c3] = tx.splitCoins(tx.gas, [50_000_000n, 50_000_000n, 50_000_000n]);
+      tx.transferObjects([c1, c2, c3], tx.pure.address(operator));
+
+      const res = await rpcManager.executeWithFallback('executeSplitGas', (c) =>
+        c.signAndExecuteTransaction({
+          signer: CONFIG.operatorKeypair,
+          transaction: tx,
+          options: { showEffects: true },
+        })
+      );
+
+      console.log(chalk.bold.green(`🎉 Gas split successfully executed on-chain!`));
+      console.log(`Transaction Digest: ${chalk.bold.cyan(res.digest)}`);
+      await gasManager.refreshGasCoins();
+      process.exit(0);
+    }
+
     default:
-      console.log(`Unknown command: ${command}. Available: start, scan, simulate, benchmark, replay, sentio, alchemy, wallet, execute, whale`);
+      console.log(`Unknown command: ${command}. Available: start, scan, simulate, benchmark, replay, sentio, alchemy, wallet, execute, whale, split-gas`);
       process.exit(1);
   }
 }

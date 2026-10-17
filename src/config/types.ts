@@ -27,6 +27,7 @@ export interface OraclePrice {
   rawPrice: bigint;         // Raw integer price
   publishTime: number;      // Unix timestamp in seconds
   lastUpdatedMs: number;    // Local millisecond timestamp
+  isDefaultSeed?: boolean;  // True if price originated from static cold-start seed table
 }
 
 export interface CollateralPosition {
@@ -135,4 +136,59 @@ export interface SystemStats {
   cumulativeNetProfitUsd: number;
   cumulativeGasSpentSui: number;
   lastLiquidationTime?: number;
+}
+
+export interface TelemetryOperator {
+  address: string;
+  gasTankBalanceSui: number;
+  gasTankBalanceMist: string;
+}
+
+export interface TelemetryFinancials {
+  netRealizedPnlUsd: number;
+  cumulativeGasSpentSui: number;
+  successfulLiquidations: number;
+  failedLiquidations: number;
+  totalSimulations: number;
+}
+
+export interface TelemetryObligations {
+  totalMonitored: number;
+  naviCount: number;
+  scallopCount: number;
+  immediateTargetsCount: number;
+  hotWatchlistCount: number;
+  safeCount: number;
+}
+
+export interface TelemetryHotWatchlistItem {
+  obligationId: string;
+  protocol: ProtocolType;
+  borrower: string;
+  healthFactor: number;
+  totalDebtUsd: number;
+  totalCollateralUsd: number;
+  urgency: 'HOT' | 'CRITICAL';
+}
+
+export interface TelemetryRecentLiquidationItem {
+  timestamp: string;
+  protocol: ProtocolType;
+  borrower: string;
+  debtRepaid: string;
+  collateralSeized: string;
+  netProfitUsd: number;
+  gasCostSui: number;
+  txDigest: string;
+  txDigestLink: string;
+}
+
+export interface TelemetryPayload {
+  timestamp: string;
+  botStatus: 'ONLINE' | 'PAUSED' | 'ERROR';
+  operator: TelemetryOperator;
+  financials: TelemetryFinancials;
+  obligations: TelemetryObligations;
+  hotWatchlist: TelemetryHotWatchlistItem[];
+  recentLiquidations: TelemetryRecentLiquidationItem[];
 }

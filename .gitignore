@@ -30,4 +30,14 @@ bin/tenderly*
 # Cloned SDKs / Sub-repos
 sui-scallop-sdk/
 
+# Runtime telemetry state & test state
+.state/
+.state*/
+*.tmp
 
+# Dart tooling & cache
+.dart_tool/
+dashboard_cli/.dart_tool/
+
+# Agent scratch & teamwork
+.agents/

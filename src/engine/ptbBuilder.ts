@@ -10,6 +10,10 @@ import { CetusRouter } from '../protocols/dex/cetusRouter.js';
 import { DeepBookRouter } from '../protocols/dex/deepbookRouter.js';
 import { AstrosRouter } from '../protocols/dex/astrosRouter.js';
 import * as navi from '@naviprotocol/lending';
+import { SuiPythClient } from '@pythnetwork/pyth-sui-js';
+import { pythService } from '../oracles/pythService.js';
+import { rpcManager } from '../client/suiClient.js';
+import { gasManager } from '../client/gasManager.js';
 import { logger } from '../ui/logger.js';
 
 export interface BuiltLiquidationPTB {
@@ -46,6 +50,17 @@ export class ZeroCapitalPtbBuilder {
     const tx = existingTx ?? new Transaction();
     tx.setSender(CONFIG.operatorAddress);
     tx.setGasBudget(BigInt(CONFIG.gasBudget));
+
+    // Zero-RPC Pre-Configuration: Pre-inject locally tracked in-memory gas coin
+    // to eliminate implicit getCoins roundtrips in downstream simulation and dry-runs
+    const cachedGas = gasManager.getGasPayment();
+    if (cachedGas) {
+      tx.setGasPayment([{
+        objectId: cachedGas.objectId,
+        version: cachedGas.version,
+        digest: cachedGas.digest,
+      }]);
+    }
 
     const debtCoinType = opportunity.debtCoinType;
     const collateralCoinType = opportunity.collateralCoinType;
@@ -163,8 +178,8 @@ export class ZeroCapitalPtbBuilder {
       loanCoin = naviLoan.loanCoin;
       receipt = naviLoan.receipt;
 
-      // Liquidate NAVI borrower
-      const [receivedCol, leftoverDebt] = NaviPtbBuilder.addLiquidate(
+      // Liquidate NAVI borrower using raw Balance<T>
+      const [colBal, leftoverDebtBal] = NaviPtbBuilder.addLiquidateBalances(
         tx,
         debtCoinType,
         debtPool.id,
@@ -175,8 +190,16 @@ export class ZeroCapitalPtbBuilder {
         colPool.poolContract,
         opportunity.obligation.ownerAddress
       );
-      collateralCoin = receivedCol;
-      leftoverDebtCoin = leftoverDebt;
+      collateralCoin = tx.moveCall({
+        target: '0x2::coin::from_balance',
+        arguments: [colBal],
+        typeArguments: [collateralCoinType],
+      });
+      leftoverDebtCoin = tx.moveCall({
+        target: '0x2::coin::from_balance',
+        arguments: [leftoverDebtBal],
+        typeArguments: [debtCoinType],
+      });
     } else {
       // Scallop Protocol
       if (opportunity.obligation.liquidateLocked) {
@@ -287,6 +310,37 @@ export class ZeroCapitalPtbBuilder {
   // Value: { isLocked: boolean; expiresMs: number }
   private static lockCache: Map<string, { isLocked: boolean; expiresMs: number }> = new Map();
   private static LOCK_CACHE_TTL_MS = 10_000; // 10 seconds
+  private static cachedPythClient: SuiPythClient | null = null;
+
+  /**
+   * Invalidate obligation lock cache entry (or all entries) so successful liquidations
+   * or borrower position updates don't use stale unlock state and trigger Scallop Move abort 2.
+   */
+  public static invalidateLockCache(obligationId?: string): void {
+    if (obligationId) {
+      this.lockCache.delete(obligationId);
+    } else {
+      this.lockCache.clear();
+    }
+  }
+
+  /**
+   * Return current lock cache entries count (useful for verification and telemetry)
+   */
+  public static getLockCacheSize(): number {
+    return this.lockCache.size;
+  }
+
+  private static getOrCreatePythClient(): SuiPythClient {
+    if (!this.cachedPythClient) {
+      this.cachedPythClient = new SuiPythClient(
+        (rpcManager.getClient() as any),
+        '0x1f9310238ee9298fb703c3419030b35b22bb1cc37113e3bb5007c99aec79e5b8', // Mainnet Pyth State ID
+        '0x31358d198147da50db32eda2562951d53cd27f59d66ceda83b06900fdfbbf528'  // Mainnet Wormhole State ID
+      );
+    }
+    return this.cachedPythClient;
+  }
 
   /**
    * High-Level Async Liquidation PTB Builder
@@ -305,9 +359,9 @@ export class ZeroCapitalPtbBuilder {
         // Note: Scallop requires fresh prices for ALL collateral and debt assets in the obligation
         // to evaluate health factor during force_unstake_unhealthy and liquidate without abort 1025.
         const oblId = opportunity.obligation.obligationId;
-        const dynamicCoinNames = await scallopProtocol.getObligationCoinNames(oblId);
-        const exactCoinNames = new Set<string>(dynamicCoinNames);
+        const exactCoinNames = new Set<string>();
 
+        // Zero-RPC Local Resolution: First derive coin names from in-memory positions (0ms)
         const allTypes = [
           ...opportunity.obligation.collaterals.filter(c => c.amount > 0n).map(c => c.coinType),
           ...opportunity.obligation.debts.filter(d => d.amount > 0n).map(d => d.coinType),
@@ -326,6 +380,16 @@ export class ZeroCapitalPtbBuilder {
         }
         exactCoinNames.add(opportunity.debtSymbol.toLowerCase());
         exactCoinNames.add(opportunity.collateralSymbol.toLowerCase());
+
+        // Always merge dynamic coin names from the obligation on-chain (cached with TTL)
+        // to guarantee that ALL collateral and debt assets are refreshed in xOracle (AGENTS.md §8.2)
+        try {
+          const dynamicCoinNames = await scallopProtocol.getObligationCoinNames(oblId);
+          dynamicCoinNames.forEach((n) => exactCoinNames.add(n));
+        } catch (e) {
+          logger.debug({ error: e, oblId }, 'Could not fetch dynamic obligation coin names');
+        }
+
         const filteredCoins = Array.from(exactCoinNames).filter(c => c !== 'coin' && c !== 'unknown');
         if (filteredCoins.length > 0) {
           await scallopTx.updateAssetPricesQuick(filteredCoins, { isSponsoredTx: false });
@@ -357,6 +421,10 @@ export class ZeroCapitalPtbBuilder {
 
         return this.buildLiquidationPTB(opportunity, scallopTx.txBlock);
       } catch (err: any) {
+        if (err?.message?.includes('Abort 2 Guard')) {
+          // Do not attempt to liquidate healthy accounts; rethrow to prevent broadcasting unexecutable PTBs
+          throw err;
+        }
         logger.error({ error: err?.message || err, stack: err?.stack }, 'Scallop SDK builder threw error in buildLiquidationPTBAsync');
         // Fall back to direct assembly if SDK builder fails
         const tx = new Transaction();
@@ -382,17 +450,9 @@ export class ZeroCapitalPtbBuilder {
         const uniqueFeedIds = Array.from(new Set(feedIds));
         
         if (uniqueFeedIds.length > 0) {
-          const { SuiPythClient } = await import('@pythnetwork/pyth-sui-js');
-          const { pythService } = await import('../oracles/pythService.js');
-          const { rpcManager } = await import('../client/suiClient.js');
+          const pythClient = this.getOrCreatePythClient();
 
-          const pythClient = new SuiPythClient(
-            (rpcManager.getClient() as any),
-            '0x1f9310238ee9298fb703c3419030b35b22bb1cc37113e3bb5007c99aec79e5b8', // Mainnet Pyth State ID
-            '0x31358d198147da50db32eda2562951d53cd27f59d66ceda83b06900fdfbbf528'  // Mainnet Wormhole State ID
-          );
-
-          // Get binary VAA payloads using the local service
+          // Get binary VAA payloads using the local service (cached)
           const vaaData = await pythService.getPriceUpdateDataForPTB(uniqueFeedIds);
 
           if (vaaData.length > 0) {
@@ -402,7 +462,11 @@ export class ZeroCapitalPtbBuilder {
         }
 
         // Must still call Navi's xOracle update to pull the fresh Pyth price into Navi's state
-        const poolList = await (navi as any).getPools();
+        // Zero-RPC In-Memory Optimization: Use cached rawPools if available
+        let poolList = naviProtocol.getRawPools();
+        if (!poolList || poolList.length === 0) {
+          poolList = await (navi as any).getPools();
+        }
         await (navi as any).updateOraclePriceBeforeUserOperationPTB(
           tx,
           opportunity.obligation.ownerAddress,

@@ -1,10 +1,10 @@
 import { CONFIG } from '../config/index.js';
-import { getAllPythFeedIds, getCoinConfigByPythId, COIN_CONFIGS } from '../config/coins.js';
+import { getAllPythFeedIds, getCoinConfigByPythId, getCoinConfigsByPythId, COIN_CONFIGS } from '../config/coins.js';
 import { priceCache } from './priceCache.js';
 import { rpcManager } from '../client/suiClient.js';
 import { logger } from '../ui/logger.js';
 
-export type PriceUpdateCallback = (feedId: string, price: number) => void;
+export type PriceUpdateCallback = (feedId: string, price: number, symbol?: string) => void;
 
 /**
  * Verified Sui Mainnet On-Chain Pyth PriceInfo Object IDs.
@@ -30,7 +30,7 @@ export const ON_CHAIN_PYTH_OBJECTS: Record<string, { objectId: string; symbols: 
   },
   WBTC: {
     objectId: '0xe64832d1b4c9a75139a7313aee69da891297d8397fda2863b5bdcc4af0b79758',
-    symbols: ['WBTC'],
+    symbols: ['WBTC', 'HBTC', 'hBTC', 'sbWBTC', 'XBTC'],
   },
   CETUS: {
     objectId: '0xb14bce71ba7e52cd52947f236604ece40f7a58a1cdf0435c8b94cf6f2d84d302',
@@ -42,7 +42,7 @@ export const ON_CHAIN_PYTH_OBJECTS: Record<string, { objectId: string; symbols: 
   },
   NAVI: {
     objectId: '0x9b9aeb630697368ca228f3353b34b4f4b1bbc1fbdbd7417b01765cb93013de12',
-    symbols: ['NAVI'],
+    symbols: ['NAVI', 'NAVX'],
   },
   SCA: {
     objectId: '0xf6de1d3279a269a597d813cbaca59aa906543ab9a8c64e84a4722f1a20863985',
@@ -64,6 +64,18 @@ export const ON_CHAIN_PYTH_OBJECTS: Record<string, { objectId: string; symbols: 
     objectId: '0xd726651e0ef603ac13eaa7c165cd0a192fc6434cc00976c9220459044775a093',
     symbols: ['USDY'],
   },
+  AUSD: {
+    objectId: '0xfaec36b7b45f96ed1b949ed45758dfa73d071f48509e550eec41ad3cfa00d1bd',
+    symbols: ['AUSD'],
+  },
+  LBTC: {
+    objectId: '0x9eaebfc21b14ea517575097e7787fe73ab92113525d7ad9acce983a2ae2570dc',
+    symbols: ['LBTC'],
+  },
+  NS: {
+    objectId: '0xea0d962a2b2cb35bbc262514ea6cfed02fdb3d5bedb193ca0d50bfefc98abebc',
+    symbols: ['NS'],
+  },
 };
 
 /**
@@ -74,6 +86,8 @@ export const ON_CHAIN_PYTH_OBJECTS: Record<string, { objectId: string; symbols: 
 export class PythPriceService {
   private pollInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
+  private inFlightFetch: Promise<void> | null = null;
+  private lastFetchTimeMs = 0;
   private updateListeners: PriceUpdateCallback[] = [];
 
   constructor(
@@ -95,10 +109,14 @@ export class PythPriceService {
 
     logger.info('Starting Pyth Price Service (Alchemy On-Chain + Multi-RPC)...');
     await this.fetchLatestPrices();
+    this.refreshVaaCache().catch(() => {});
 
     this.pollInterval = setInterval(async () => {
       try {
         await this.fetchLatestPrices();
+        if (Date.now() - this.lastVaaRefreshAt > 6000) {
+          this.refreshVaaCache().catch(() => {});
+        }
       } catch (err) {
         logger.debug({ error: err }, 'Failed to refresh Pyth prices');
       }
@@ -161,7 +179,7 @@ export class PythPriceService {
             // SNAPSHOT: safe to mutate after loop per AGENTS.md Rule 5.2
             const listeners = Array.from(this.updateListeners);
             for (const listener of listeners) {
-              listener(cfg.pythPriceFeedId, normPrice);
+              listener(cfg.pythPriceFeedId, normPrice, symbol);
             }
           }
           updatedCount++;
@@ -185,6 +203,21 @@ export class PythPriceService {
    * Fetch latest price feeds for all monitored tokens
    */
   public async fetchLatestPrices(): Promise<void> {
+    if (this.inFlightFetch) {
+      return this.inFlightFetch;
+    }
+    const now = Date.now();
+    if (now - this.lastFetchTimeMs < 1000) {
+      return;
+    }
+    this.lastFetchTimeMs = now;
+    this.inFlightFetch = this._executeFetchLatestPrices().finally(() => {
+      this.inFlightFetch = null;
+    });
+    return this.inFlightFetch;
+  }
+
+  private async _executeFetchLatestPrices(): Promise<void> {
     // 1. Primary: Direct on-chain multiGetObjects via Alchemy RPC
     const onChainSuccess = await this.fetchOnChainPricesViaAlchemy();
     if (onChainSuccess) return;
@@ -229,13 +262,13 @@ export class PythPriceService {
             const priceInfo = item.price;
             if (priceInfo) {
               priceCache.updateFromPyth(feedId, priceInfo.price, priceInfo.expo, priceInfo.publish_time);
-              const cfg = getCoinConfigByPythId(feedId);
-              if (cfg) {
+              const configs = getCoinConfigsByPythId(feedId);
+              for (const cfg of configs) {
                 const normPrice = Number(priceInfo.price) * Math.pow(10, priceInfo.expo);
                 // SNAPSHOT: safe to mutate after loop per AGENTS.md Rule 5.2
                 const listeners = Array.from(this.updateListeners);
                 for (const listener of listeners) {
-                  listener(feedId, normPrice);
+                  listener(feedId, normPrice, cfg.symbol);
                 }
               }
             }
@@ -250,10 +283,15 @@ export class PythPriceService {
     logger.debug({ error: lastError }, 'Pyth Hermes fetch attempt completed (fallback cache active)');
   }
 
+  private vaaCache: Map<string, { data: string; cachedAt: number }> = new Map();
+  private readonly VAA_CACHE_TTL_MS = 8_000;
+  private lastVaaRefreshAt = 0;
+
   /**
-   * Fetch binary VAA price update data to inject into PTB on-chain oracle refresh
+   * Refresh VAA cache for the given feed IDs (or all monitored feeds)
    */
-  public async getPriceUpdateDataForPTB(feedIds: string[]): Promise<string[]> {
+  public async refreshVaaCache(feedIds?: string[]): Promise<void> {
+    const targetIds = feedIds && feedIds.length > 0 ? feedIds : getAllPythFeedIds();
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (CONFIG.pythApiKey) {
       headers.Authorization = `Bearer ${CONFIG.pythApiKey}`;
@@ -262,26 +300,52 @@ export class PythPriceService {
     for (const endpoint of this.hermesEndpoints) {
       try {
         const url = new URL(`${endpoint.replace(/\/$/, '')}/v2/updates/price/latest`);
-        for (const id of feedIds) {
+        for (const id of targetIds) {
           url.searchParams.append('ids[]', id);
         }
         url.searchParams.set('encoding', 'base64');
         url.searchParams.set('parsed', 'false');
 
-        const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(4000) });
-
+        const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(2500) });
         if (!res.ok) continue;
 
         const data = (await res.json()) as { binary?: { data?: string[] } };
         if (data.binary && Array.isArray(data.binary.data)) {
-          return data.binary.data;
+          const now = Date.now();
+          data.binary.data.forEach((vaa, idx) => {
+            if (targetIds[idx] && vaa) {
+              this.vaaCache.set(targetIds[idx], { data: vaa, cachedAt: now });
+            }
+          });
+          this.lastVaaRefreshAt = now;
+          return;
         }
       } catch {
         continue;
       }
     }
+  }
 
-    return [];
+  /**
+   * Fetch binary VAA price update data to inject into PTB on-chain oracle refresh.
+   * Hits the local memory cache first (0ms latency), falling back to Hermes on cache miss.
+   */
+  public async getPriceUpdateDataForPTB(feedIds: string[]): Promise<string[]> {
+    const now = Date.now();
+    const cached = feedIds
+      .map((id) => this.vaaCache.get(id))
+      .filter((v) => v && now - v.cachedAt < this.VAA_CACHE_TTL_MS)
+      .map((v) => v!.data);
+
+    if (cached.length === feedIds.length && cached.length > 0) {
+      return cached;
+    }
+
+    // Cache miss or expired — refresh synchronously
+    await this.refreshVaaCache(feedIds);
+    return feedIds
+      .map((id) => this.vaaCache.get(id)?.data)
+      .filter((d): d is string => typeof d === 'string');
   }
 }
 

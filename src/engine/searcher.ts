@@ -12,15 +12,26 @@ import { PreFlightSimulator } from './simulator.js';
 import { TransactionExecutor } from './executor.js';
 import { gasManager } from '../client/gasManager.js';
 import { CetusRouter } from '../protocols/dex/cetusRouter.js';
+import { validateSharedVersions } from '../config/constants.js';
+import { rpcManager } from '../client/suiClient.js';
+import { priceCache } from '../oracles/priceCache.js';
 import { logger } from '../ui/logger.js';
+import { telemetryBridge } from './telemetryBridge.js';
 
 /**
  * Main MEV Liquidation Searcher Daemon
  */
 export class LiquidationSearcher {
-  private isRunning = false;
+  public isRunning = false;
   private startTime = Date.now();
   private isProcessingQueue = false;
+  private isTickRunning = false;
+  private tickInterval: NodeJS.Timeout | null = null;
+  private queue: LiquidationOpportunity[] = [];
+  private inFlightObligations: Set<string> = new Set();
+  private lastOnDemandRefreshByObligation: Map<string, number> = new Map();
+  private activePipelineCount = 0;
+  private readonly MAX_CONCURRENT_PIPELINES = 3;
 
   public stats: SystemStats = {
     uptimeSeconds: 0,
@@ -72,6 +83,9 @@ export class LiquidationSearcher {
     await CetusRouter.syncDynamicPools();
     CetusRouter.startDynamicSync(600_000);
 
+    // Start Telemetry Bridge Daemon immediately so dashboard has live metrics from boot
+    telemetryBridge.start(1000);
+
     // Initialize protocols
     if (CONFIG.protocols.includes('navi')) {
       await naviProtocol.initialize();
@@ -81,45 +95,102 @@ export class LiquidationSearcher {
 
     if (CONFIG.protocols.includes('scallop')) {
       await scallopProtocol.initialize();
+      try {
+        await validateSharedVersions(rpcManager.getClient());
+        logger.info('Verified Scallop shared object initial versions against on-chain state');
+      } catch (err) {
+        logger.warn({ error: err }, 'Scallop shared versions validation warning');
+      }
       scallopIndexer.onObligationUpdate((state) => this.handleObligationUpdate(state));
       await scallopIndexer.start();
     }
 
     // Start Pyth price feeds and register price-tick trigger
-    pythService.onPriceUpdate(() => {
-      this.handlePriceTick();
+    pythService.onPriceUpdate((feedId, price, symbol) => {
+      this.handlePriceTick(feedId, price, symbol).catch(() => {});
     });
     await pythService.start(1000);
 
     // Continuous tick loop
-    setInterval(() => {
+    this.tickInterval = setInterval(() => {
       this.updateStats();
-      this.processImmediateTargets();
+      this.processImmediateTargets().catch((err) => {
+        logger.warn({ error: err?.message }, 'Error in periodic searcher tick');
+      });
     }, 1000);
   }
 
   public stop(): void {
     this.isRunning = false;
+    telemetryBridge.stop();
+    if (this.tickInterval) {
+      clearInterval(this.tickInterval);
+      this.tickInterval = null;
+    }
+    this.queue = [];
+    this.inFlightObligations.clear();
+    this.activePipelineCount = 0;
     pythService.stop();
     naviIndexer.stop();
     scallopIndexer.stop();
+    gasManager.stopBackgroundReconciliation();
     logger.info('SuiMEV Liquidation Engine stopped');
   }
 
   private handleObligationUpdate(state: ObligationState): void {
     obligationRegistry.upsertObligation(state);
+    ZeroCapitalPtbBuilder.invalidateLockCache(state.obligationId);
     if (state.healthFactor < 1.0) {
-      this.processImmediateTargets();
+      this.processImmediateTargets().catch(() => {});
     } else if (state.healthFactor <= 1.03 && state.protocol === 'scallop') {
       // Institutional Predictive Pre-Warm: Pre-fetch Scallop lock status into RAM before 1.0 breach
       scallopProtocol.isObligationLocked(state.obligationId).catch(() => {});
     }
   }
 
-  private handlePriceTick(): void {
-    const newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
-    if (newlyUndercollateralized.length > 0) {
-      this.processImmediateTargets();
+  private async handlePriceTick(feedId?: string, price?: number, symbol?: string): Promise<void> {
+    if (this.isTickRunning) return;
+    this.isTickRunning = true;
+    try {
+      const isBtcUpdate =
+        symbol?.toUpperCase().includes('BTC') ||
+        feedId === '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43';
+
+      let newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
+
+      // If Bitcoin oracle updated, track volatility and scan ALL obligations holding hBTC/BTC collateral
+      // to capture cascading liquidations immediately from steep BTC price drops
+      if (isBtcUpdate) {
+        if (price !== undefined && price > 0) {
+          const { dropBps, isDrop } = priceCache.recordBtcPriceUpdate(price);
+          if (isDrop && dropBps >= 50) { // >= 0.50% drop
+            logger.warn(
+              { symbol: symbol ?? 'BTC', price, dropBps },
+              `📉 Steep BTC drop detected (-${(dropBps / 100).toFixed(2)}%) — triggering full hBTC collateral cascade sweep`
+            );
+          }
+        }
+
+        const volatileTargets = obligationRegistry.reevaluateVolatileCollaterals('BTC');
+        const existingIds = new Set(newlyUndercollateralized.map((o) => o.obligationId));
+        for (const t of volatileTargets) {
+          if (!existingIds.has(t.obligationId)) {
+            newlyUndercollateralized.push(t);
+          }
+        }
+      }
+
+      if (newlyUndercollateralized.length > 0) {
+        logger.warn(
+          { count: newlyUndercollateralized.length, isBtcUpdate },
+          `🚨 Liquidation targets emerged after price update — initiating immediate processing`
+        );
+        await this.processImmediateTargets();
+      }
+    } catch (err: any) {
+      logger.warn({ error: err?.message }, 'Error during price tick evaluation');
+    } finally {
+      this.isTickRunning = false;
     }
   }
 
@@ -133,19 +204,82 @@ export class LiquidationSearcher {
   }
 
   /**
-   * Process all currently liquidatable obligations
+   * Process all currently liquidatable obligations using a bounded concurrency queue
    */
   public async processImmediateTargets(): Promise<void> {
+    const targets = obligationRegistry.getImmediateTargets();
+    if (targets.length === 0 && this.queue.length === 0) {
+      return;
+    }
+
+    // Snapshot collection before iterating per AGENTS.md Rule 5
+    const targetList = Array.from(targets);
+    for (const target of targetList) {
+      const oblId = target.obligationId;
+      if (this.inFlightObligations.has(oblId)) {
+        continue;
+      }
+      if (this.queue.some((item) => item.obligation.obligationId === oblId)) {
+        continue;
+      }
+
+      const opp = HealthFactorEngine.findBestLiquidationOpportunity(target);
+      if (opp && opp.expectedGrossProfitUsd >= CONFIG.minProfitUsd) {
+        // Price Freshness & Stale Fallback Guard per audit plan & AGENTS.md §8
+        if (!priceCache.arePricesFreshForOpportunity(opp)) {
+          const lastRefresh = this.lastOnDemandRefreshByObligation.get(oblId) ?? 0;
+          if (Date.now() - lastRefresh > 15_000) {
+            this.lastOnDemandRefreshByObligation.set(oblId, Date.now());
+            logger.warn(
+              { borrower: target.ownerAddress, protocol: target.protocol },
+              'Opportunity references stale or unverified cold-start seed prices — triggering on-demand Pyth refresh'
+            );
+            pythService.fetchLatestPrices().catch(() => {});
+          }
+          continue;
+        }
+
+        this.queue.push(opp);
+      }
+    }
+
+    // Sort queue by gross profit descending (highest MEV yield executed first)
+    this.queue.sort((a, b) => b.expectedGrossProfitUsd - a.expectedGrossProfitUsd);
+
+    this.drainQueue();
+  }
+
+  /**
+   * Drain opportunity queue ensuring concurrency never exceeds MAX_CONCURRENT_PIPELINES
+   * and no burst arrivals or dropped opportunities occur.
+   */
+  private drainQueue(): void {
     if (this.isProcessingQueue) return;
     this.isProcessingQueue = true;
 
     try {
-      const targets = obligationRegistry.getImmediateTargets();
-      for (const target of targets) {
-        const opp = HealthFactorEngine.findBestLiquidationOpportunity(target);
-        if (opp && opp.expectedGrossProfitUsd >= CONFIG.minProfitUsd) {
-          await this.executeLiquidationPipeline(opp);
+      while (this.activePipelineCount < this.MAX_CONCURRENT_PIPELINES && this.queue.length > 0) {
+        const opp = this.queue.shift();
+        if (!opp) break;
+
+        const oblId = opp.obligation.obligationId;
+        if (this.inFlightObligations.has(oblId)) {
+          continue;
         }
+
+        this.inFlightObligations.add(oblId);
+        this.activePipelineCount++;
+
+        this.executeLiquidationPipeline(opp)
+          .catch((err) => {
+            logger.warn({ error: err?.message, borrower: opp.obligation.ownerAddress }, 'Pipeline execution encountered an error');
+          })
+          .finally(() => {
+            this.activePipelineCount--;
+            this.inFlightObligations.delete(oblId);
+            ZeroCapitalPtbBuilder.invalidateLockCache(oblId);
+            this.drainQueue();
+          });
       }
     } finally {
       this.isProcessingQueue = false;
@@ -171,33 +305,19 @@ export class LiquidationSearcher {
       // STEP 1: Construct atomic PTB (with async oracle freshness and unlock handling)
       const builtPtb = await ZeroCapitalPtbBuilder.buildLiquidationPTBAsync(opportunity);
 
-      // STEP 2: Dual-Tier Execution: Fast-Path vs Safe-Path Simulation
-      // For high-confidence liquidations (Hf <= 0.985), bypass devInspect simulation to save ~180ms in the MEV race
-      let simulatedProfitUsd = opportunity.expectedGrossProfitUsd;
-      const isHighConfidence = opportunity.obligation.healthFactor <= 0.985 && !CONFIG.dryRun;
+      // STEP 2: Pre-Flight Simulation Guard per AGENTS.md §4 & §15
+      this.stats.totalSimulations++;
+      const simResult = await PreFlightSimulator.simulate(builtPtb.tx, opportunity);
 
-      if (isHighConfidence) {
-        logger.info(
-          { hf: opportunity.obligation.healthFactor.toFixed(4) },
-          '⚡ FAST-PATH TRIGGERED: High-confidence liquidation (Hf <= 0.985), bypassing devInspect simulation to save ~180ms'
+      if (!simResult.success || !simResult.isProfitable) {
+        logger.warn(
+          { error: simResult.errorMessage, isProfitable: simResult.isProfitable, borrower: opportunity.obligation.ownerAddress },
+          'Pre-flight simulation rejected liquidation (prevented consensus revert & gas loss)'
         );
-        this.stats.totalSimulations++;
-        this.stats.successfulSimulations++;
-      } else {
-        // Safe-Path: Pre-flight devInspect simulation for borderline opportunities
-        this.stats.totalSimulations++;
-        const simResult = await PreFlightSimulator.simulate(builtPtb.tx, opportunity);
-
-        if (!simResult.success || !simResult.isProfitable) {
-          logger.warn(
-            { error: simResult.errorMessage, isProfitable: simResult.isProfitable },
-            'Pre-flight simulation rejected liquidation'
-          );
-          return false;
-        }
-        this.stats.successfulSimulations++;
-        simulatedProfitUsd = simResult.netProfitUsd;
+        return false;
       }
+      this.stats.successfulSimulations++;
+      const simulatedProfitUsd = simResult.netProfitUsd;
 
       // STEP 3: Execute transaction via Parallel Broadcast Race
       this.stats.totalLiquidationsAttempted++;
@@ -212,6 +332,7 @@ export class LiquidationSearcher {
         this.stats.cumulativeNetProfitUsd += execResult.netProfitUsd;
         this.stats.cumulativeGasSpentSui += execResult.gasUsedSui;
         this.stats.lastLiquidationTime = execResult.timestamp;
+        telemetryBridge.exportSnapshot().catch(() => {});
         return true;
       } else {
         this.stats.failedLiquidations++;
@@ -227,7 +348,13 @@ export class LiquidationSearcher {
         'Unhandled error in liquidation pipeline'
       );
       return false;
+    } finally {
+      ZeroCapitalPtbBuilder.invalidateLockCache(opportunity.obligation.obligationId);
     }
+  }
+
+  public getRecentLiquidations() {
+    return telemetryBridge.getRecentLiquidations();
   }
 }
 

@@ -188,6 +188,117 @@ export class SuiGraphQLService {
   }
 
   /**
+   * Batch-fetch multiple object states in chunks using GraphQL field aliases.
+   * Eliminates single-object serial HTTP round-trips.
+   */
+  public async multiGetObjects(addresses: string[]): Promise<Map<string, GraphQLObjectResult>> {
+    const results = new Map<string, GraphQLObjectResult>();
+    if (addresses.length === 0) return results;
+
+    const CHUNK_SIZE = 30;
+    for (let i = 0; i < addresses.length; i += CHUNK_SIZE) {
+      const chunk = addresses.slice(i, i + CHUNK_SIZE);
+      const aliases = chunk
+        .map(
+          (addr, idx) => `
+        obj_${idx}: object(address: "${addr}") {
+          address
+          version
+          digest
+          asMoveObject {
+            hasPublicTransfer
+            contents {
+              type { repr }
+              json
+            }
+          }
+          owner {
+            __typename
+            ... on Shared { initialSharedVersion }
+            ... on AddressOwner { owner { address } }
+          }
+        }`
+        )
+        .join('\n');
+
+      const query = `query MultiGetObjects { ${aliases} }`;
+      try {
+        const res = await this.executeQuery<Record<string, any>>(query, {});
+        if (res.data) {
+          for (const [key, obj] of Object.entries(res.data)) {
+            if (obj && obj.address) {
+              const typeRepr = obj.asMoveObject?.contents?.type?.repr;
+              results.set(obj.address, {
+                objectId: obj.address,
+                version: String(obj.version),
+                digest: obj.digest,
+                type: typeRepr ? normalizeStructTag(typeRepr) : undefined,
+                owner: obj.owner,
+                hasPublicTransfer: obj.asMoveObject?.hasPublicTransfer,
+                contents: obj.asMoveObject?.contents?.json,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn({ error: err, chunkCount: chunk.length }, 'GraphQL multiGetObjects chunk failed');
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Batch-fetch Scallop/Navi obligation raw object contents via GraphQL aliases
+   */
+  public async queryObligationsBatch(
+    objectIds: string[]
+  ): Promise<Map<string, { collaterals: any[]; debts: any[]; ownerAddress: string }>> {
+    const result = new Map<string, { collaterals: any[]; debts: any[]; ownerAddress: string }>();
+    if (objectIds.length === 0) return result;
+
+    const CHUNK = 30;
+    for (let i = 0; i < objectIds.length; i += CHUNK) {
+      const chunk = objectIds.slice(i, i + CHUNK);
+      const aliases = chunk
+        .map(
+          (id, idx) => `
+        o_${idx}: object(address: "${id}") {
+          address
+          asMoveObject {
+            contents { json }
+            owner {
+              __typename
+              ... on AddressOwner { owner { address } }
+            }
+          }
+        }`
+        )
+        .join('\n');
+
+      const query = `query BatchObligations { ${aliases} }`;
+      try {
+        const res = await this.executeQuery<Record<string, any>>(query, {});
+        if (res.data) {
+          for (const [_alias, obj] of Object.entries(res.data)) {
+            if (obj && obj.address) {
+              const json = obj.asMoveObject?.contents?.json ?? {};
+              result.set(obj.address, {
+                collaterals: json.collaterals?.fields?.items ?? json.collaterals ?? [],
+                debts: json.debts?.fields?.items ?? json.debts ?? [],
+                ownerAddress: obj.asMoveObject?.owner?.owner?.address ?? obj.address,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn({ error: err }, 'GraphQL queryObligationsBatch chunk failed');
+      }
+    }
+    return result;
+  }
+
+  /**
    * Execute custom GraphQL query with variables
    */
   public async query<T = unknown>(queryString: string, variables?: Record<string, unknown>): Promise<T | null> {

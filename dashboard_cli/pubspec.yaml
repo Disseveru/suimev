@@ -1,0 +1,20 @@
+name: dashboard_cli
+description: Non-coder friendly real-time terminal live feed for SuiMEV liquidator engine.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+executables:
+  dashboard: dashboard
+
+dependencies:
+  args: ^2.5.0
+  async: ^2.11.0
+  io: ^1.0.4
+  path: ^1.9.0
+
+dev_dependencies:
+  lints: ^4.0.0
+  test: ^1.25.0

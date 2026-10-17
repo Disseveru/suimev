@@ -3,6 +3,8 @@ import { LiquidationOpportunity, SimulationResult } from '../config/types.js';
 import { rpcManager } from '../client/suiClient.js';
 import { CONFIG } from '../config/index.js';
 import { priceCache } from '../oracles/priceCache.js';
+import { GasPriceOracle, TransactionExecutor } from './executor.js';
+import { gasManager } from '../client/gasManager.js';
 import { logger } from '../ui/logger.js';
 
 /**
@@ -37,6 +39,9 @@ export class PreFlightSimulator {
 
       if (status !== 'success') {
         const errorMsg = effects?.status?.error || 'Transaction simulation reverted on-chain';
+        if (gasManager.isGasObjectError(errorMsg)) {
+          gasManager.handleGasError(errorMsg).catch(() => {});
+        }
         return {
           success: false,
           opportunity,
@@ -60,6 +65,17 @@ export class PreFlightSimulator {
 
       let netGasMist = computationCost + storageCost - storageRebate;
       if (netGasMist < 0n) netGasMist = 0n; // rebate floor: sponsored tx clamp
+
+      if (computationCost > 0n) {
+        const currentRgp = TransactionExecutor.getCachedRefGasPriceSync();
+        const normalizedUnits = (computationCost * 1000n) / (currentRgp > 0n ? currentRgp : 1000n);
+        GasPriceOracle.recordSample({
+          timestamp: Date.now(),
+          computationUnits: normalizedUnits,
+          refGasPrice: currentRgp,
+          wasIncluded: false,
+        });
+      }
 
       const gasUsedSui = Number(netGasMist) / 1e9;
       const gasCostUsd = gasUsedSui * suiPriceUsd;
@@ -98,6 +114,9 @@ export class PreFlightSimulator {
         sentioSimulatorUrl: `https://app.sentio.xyz/sui`,
       };
     } catch (err) {
+      if (gasManager.isGasObjectError(err)) {
+        gasManager.handleGasError(err).catch(() => {});
+      }
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.debug({ error: errorMsg }, 'Pre-flight simulation encountered an RPC error');
 
@@ -129,19 +148,37 @@ export class PreFlightSimulator {
 
       // Build raw transaction bytes for dry-run
       const client = rpcManager.getClient();
-      let txBytes: Uint8Array;
+      let txBytes: Uint8Array | null = null;
       try {
         txBytes = await tx.build({ client });
       } catch {
-        const clonedTx = Transaction.from(tx);
-        clonedTx.setGasPayment([
-          {
-            objectId: '0x' + '0'.repeat(63) + '1',
-            version: '1',
-            digest: '11111111111111111111111111111111',
-          },
-        ]);
-        txBytes = await clonedTx.build({ client, onlyTransactionKind: false });
+        const activeGas = gasManager.getActiveGasObject();
+        if (activeGas) {
+          const clonedTx = Transaction.from(tx);
+          clonedTx.setGasPayment([
+            {
+              objectId: activeGas.objectId,
+              version: activeGas.version,
+              digest: activeGas.digest,
+            },
+          ]);
+          try {
+            txBytes = await clonedTx.build({ client, onlyTransactionKind: false });
+          } catch {
+            txBytes = null;
+          }
+        }
+      }
+
+      if (!txBytes) {
+        // Zero-Mock Fallback per AGENTS.md Rule 1: If no valid on-chain gas object is available,
+        // rely on devInspectTransactionBlock which evaluates transaction execution natively
+        // without requiring gas payment object resolution or mock objects.
+        const simResult = await this.simulate(tx, opportunity);
+        return {
+          ...simResult,
+          simulationType: 'dryRun',
+        };
       }
 
       const dryRunResult = await rpcManager.executeWithFallback(
@@ -158,6 +195,9 @@ export class PreFlightSimulator {
 
       if (status !== 'success') {
         const errorMsg = effects?.status?.error || 'Dry-run reverted on-chain';
+        if (gasManager.isGasObjectError(errorMsg)) {
+          gasManager.handleGasError(errorMsg).catch(() => {});
+        }
         return {
           success: false,
           opportunity,
@@ -205,6 +245,9 @@ export class PreFlightSimulator {
         sentioSimulatorUrl: `https://app.sentio.xyz/sui`,
       };
     } catch (err) {
+      if (gasManager.isGasObjectError(err)) {
+        gasManager.handleGasError(err).catch(() => {});
+      }
       const errorMsg = err instanceof Error ? err.message : String(err);
       return {
         success: false,

@@ -16,14 +16,12 @@ export type ScallopObligationCallback = (obligation: ObligationState) => void;
 export class ScallopIndexer {
   private knownObligationIds: Set<string> = new Set();
   private obligations: Map<string, ObligationState> = new Map();
+  private inFlightRefreshes: Map<string, Promise<ObligationState | null>> = new Map();
   private listeners: ScallopObligationCallback[] = [];
   private isRunning = false;
   private sweepInterval: NodeJS.Timeout | null = null;
 
-  constructor() {
-    // Seed confirmed high-conviction obligations including the $160K whale
-    this.knownObligationIds.add('0x33fee6c01c25a4925ca053df2c99f0cb9d0c5c4985595b6e8eee5b66ebedb277');
-  }
+  constructor() {}
 
   public onObligationUpdate(callback: ScallopObligationCallback): void {
     this.listeners.push(callback);
@@ -88,6 +86,18 @@ export class ScallopIndexer {
 
   private handleScallopEvent(event: Record<string, unknown>): void {
     try {
+      const typeStr = (event.type as string | undefined) ?? '';
+      // Pre-filter: skip event if explicit type does not relate to obligation state mutations
+      if (
+        typeStr &&
+        !typeStr.includes('borrow') &&
+        !typeStr.includes('collateral') &&
+        !typeStr.includes('obligation') &&
+        !typeStr.includes('liquidate')
+      ) {
+        return;
+      }
+
       const parsedJson = event.parsedJson as Record<string, unknown> | undefined;
       const obligationId = (parsedJson?.obligation || parsedJson?.obligation_id) as string | undefined;
 
@@ -106,97 +116,49 @@ export class ScallopIndexer {
 
   public async discoverObligationsFromHistory(maxPages: number = 200): Promise<void> {
     try {
-      logger.info('Querying historical Scallop events with cursor pagination across open_obligation, borrow, and deposit_collateral...');
+      logger.info('Querying historical Scallop events with cursor pagination in parallel across open_obligation, borrow, and deposit_collateral...');
       
-      // 1. Paginate open_obligation events (every created obligation)
-      let openCursor: any = null;
-      let openPages = 0;
-      while (openPages < maxPages) {
-        try {
-          const res = await rpcManager.executeWithFallback('scallopOpenOblEvents', (client) =>
-            client.queryEvents({
-              query: { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'open_obligation' } },
-              cursor: openCursor,
-              limit: 100,
-            })
-          );
-          openPages++;
-          if (res.data) {
-            for (const ev of res.data) {
-              const json = ev.parsedJson as Record<string, unknown> | undefined;
-              const oblId = (json?.obligation || json?.obligation_id) as string | undefined;
-              if (oblId && typeof oblId === 'string' && oblId.startsWith('0x')) {
-                this.addObligation(oblId);
+      const paginateModule = async (moduleName: string): Promise<number> => {
+        let cursor: any = null;
+        let pages = 0;
+        while (pages < maxPages) {
+          try {
+            const res = await rpcManager.executeWithFallback(`scallopQuery_${moduleName}`, (client) =>
+              client.queryEvents({
+                query: { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: moduleName } },
+                cursor,
+                limit: 100,
+              })
+            );
+            pages++;
+            if (res.data) {
+              for (const ev of res.data) {
+                const json = ev.parsedJson as Record<string, unknown> | undefined;
+                const oblId = (json?.obligation || json?.obligation_id) as string | undefined;
+                if (oblId && typeof oblId === 'string' && oblId.startsWith('0x')) {
+                  this.addObligation(oblId);
+                }
               }
             }
+            if (!res.hasNextPage || !res.nextCursor) break;
+            cursor = res.nextCursor;
+          } catch (err) {
+            logger.debug({ error: err, module: moduleName }, 'Error during Scallop event pagination');
+            break;
           }
-          if (!res.hasNextPage || !res.nextCursor) break;
-          openCursor = res.nextCursor;
-        } catch (err) {
-          logger.debug({ error: err }, 'Error during open_obligation event pagination');
-          break;
         }
-      }
+        return pages;
+      };
 
-      // 2. Paginate borrow events (active borrowers)
-      let borrowCursor: any = null;
-      let borrowPages = 0;
-      while (borrowPages < maxPages) {
-        try {
-          const res = await rpcManager.executeWithFallback('scallopBorrowEvents', (client) =>
-            client.queryEvents({
-              query: { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'borrow' } },
-              cursor: borrowCursor,
-              limit: 100,
-            })
-          );
-          borrowPages++;
-          if (res.data) {
-            for (const ev of res.data) {
-              const json = ev.parsedJson as Record<string, unknown> | undefined;
-              const oblId = (json?.obligation || json?.obligation_id) as string | undefined;
-              if (oblId && typeof oblId === 'string' && oblId.startsWith('0x')) {
-                this.addObligation(oblId);
-              }
-            }
-          }
-          if (!res.hasNextPage || !res.nextCursor) break;
-          borrowCursor = res.nextCursor;
-        } catch (err) {
-          logger.debug({ error: err }, 'Error during Scallop borrow event pagination');
-          break;
-        }
-      }
+      const [openRes, borrowRes, colRes] = await Promise.allSettled([
+        paginateModule('open_obligation'),
+        paginateModule('borrow'),
+        paginateModule('deposit_collateral'),
+      ]);
 
-      // 3. Paginate deposit_collateral events
-      let colCursor: any = null;
-      let colPages = 0;
-      while (colPages < maxPages) {
-        try {
-          const res = await rpcManager.executeWithFallback('scallopColEvents', (client) =>
-            client.queryEvents({
-              query: { MoveModule: { package: SCALLOP_CONFIG.protocolPkg, module: 'deposit_collateral' } },
-              cursor: colCursor,
-              limit: 100,
-            })
-          );
-          colPages++;
-          if (res.data) {
-            for (const ev of res.data) {
-              const json = ev.parsedJson as Record<string, unknown> | undefined;
-              const oblId = (json?.obligation || json?.obligation_id) as string | undefined;
-              if (oblId && typeof oblId === 'string' && oblId.startsWith('0x')) {
-                this.addObligation(oblId);
-              }
-            }
-          }
-          if (!res.hasNextPage || !res.nextCursor) break;
-          colCursor = res.nextCursor;
-        } catch (err) {
-          logger.debug({ error: err }, 'Error during Scallop deposit_collateral event pagination');
-          break;
-        }
-      }
+      const openPages = openRes.status === 'fulfilled' ? openRes.value : 0;
+      const borrowPages = borrowRes.status === 'fulfilled' ? borrowRes.value : 0;
+      const colPages = colRes.status === 'fulfilled' ? colRes.value : 0;
 
       logger.info(`Discovered ${this.knownObligationIds.size} active Scallop obligations across ${openPages + borrowPages + colPages} historical pages`);
       await this.refreshAllObligations();
@@ -215,96 +177,133 @@ export class ScallopIndexer {
   }
 
   public async refreshObligationState(obligationId: string): Promise<ObligationState | null> {
-    try {
-      const sdk = scallopProtocol.getSdk();
-      if (sdk) {
-        const query = await sdk.createScallopQuery();
-        const oblData = await query.queryObligation(obligationId);
-
-        if (oblData) {
-          const collaterals: CollateralPosition[] = [];
-          const debts: DebtPosition[] = [];
-
-          if (oblData.collaterals && Array.isArray(oblData.collaterals)) {
-            for (const col of oblData.collaterals) {
-              const coinType = col.type;
-              const cfg = getCoinConfigByType(coinType);
-              const lowerType = coinType.toLowerCase();
-              const inferredDecimals = cfg?.decimals ?? (
-                lowerType.includes('btc') ? 8 :
-                lowerType.includes('eth') ? 8 :
-                lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('usd') || lowerType.includes('deep') ? 6 : 9
-              );
-              const inferredLt = cfg?.liquidationThreshold ?? (
-                lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('sui') || lowerType.includes('usd') ? 0.90 : 0.80
-              );
-              const parsedName = (query as any).utils?.parseCoinNameFromType?.(coinType);
-              const symbol = cfg?.symbol ?? (parsedName ? parsedName.toUpperCase() : coinType.split('::')[2]) ?? 'UNKNOWN';
-              collaterals.push({
-                coinType,
-                symbol,
-                amount: BigInt(col.amount ?? '0'),
-                decimals: inferredDecimals,
-                valueUsd: 0,
-                liquidationThreshold: inferredLt,
-              });
-            }
-          }
-
-          if (oblData.debts && Array.isArray(oblData.debts)) {
-            for (const d of oblData.debts) {
-              const coinType = d.type;
-              const cfg = getCoinConfigByType(coinType);
-              const lowerType = coinType.toLowerCase();
-              const inferredDecimals = cfg?.decimals ?? (
-                lowerType.includes('btc') ? 8 :
-                lowerType.includes('eth') ? 8 :
-                lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('usd') || lowerType.includes('deep') ? 6 : 9
-              );
-              const parsedName = (query as any).utils?.parseCoinNameFromType?.(coinType);
-              const symbol = cfg?.symbol ?? (parsedName ? parsedName.toUpperCase() : coinType.split('::')[2]) ?? 'UNKNOWN';
-              debts.push({
-                coinType,
-                symbol,
-                amount: BigInt(d.amount ?? '0'),
-                decimals: inferredDecimals,
-                valueUsd: 0,
-              });
-            }
-          }
-
-          if (debts.length === 0 && collaterals.length === 0) return null;
-
-          const state: ObligationState = {
-            protocol: 'scallop',
-            obligationId,
-            ownerAddress: obligationId,
-            collaterals,
-            debts,
-            totalCollateralUsd: 0,
-            totalDebtUsd: 0,
-            liquidationThresholdCollateralUsd: 0,
-            healthFactor: Infinity,
-            isLiquidatable: false,
-            lastUpdatedMs: Date.now(),
-          };
-
-          HealthFactorEngine.evaluateObligation(state);
-          this.obligations.set(obligationId, state);
-
-          for (const listener of this.listeners) {
-            listener(state);
-          }
-
-          return state;
-        }
-      }
-
-      return null;
-    } catch (err) {
-      logger.debug({ obligationId, error: err }, 'Error refreshing Scallop obligation');
-      return null;
+    const existing = this.inFlightRefreshes.get(obligationId);
+    if (existing) {
+      return existing;
     }
+
+    const MAX_PARALLEL_REFRESHES = 15;
+    if (this.inFlightRefreshes.size >= MAX_PARALLEL_REFRESHES) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    const promise = (async () => {
+      try {
+        const query = await scallopProtocol.getOrCreateQuery();
+        if (query) {
+          const oblData = await query.queryObligation(obligationId);
+
+          if (oblData) {
+            const collaterals: CollateralPosition[] = [];
+            const debts: DebtPosition[] = [];
+
+            if (oblData.collaterals && Array.isArray(oblData.collaterals)) {
+              for (const col of oblData.collaterals) {
+                const meta = this.inferCoinMetadata(col.type, query);
+                collaterals.push({
+                  coinType: col.type,
+                  symbol: meta.symbol,
+                  amount: BigInt(col.amount ?? '0'),
+                  decimals: meta.decimals,
+                  valueUsd: 0,
+                  liquidationThreshold: meta.lt,
+                });
+              }
+            }
+
+            if (oblData.debts && Array.isArray(oblData.debts)) {
+              for (const d of oblData.debts) {
+                const meta = this.inferCoinMetadata(d.type, query);
+                debts.push({
+                  coinType: d.type,
+                  symbol: meta.symbol,
+                  amount: BigInt(d.amount ?? '0'),
+                  decimals: meta.decimals,
+                  valueUsd: 0,
+                });
+              }
+            }
+
+            if (debts.length === 0 && collaterals.length === 0) return null;
+
+            const state: ObligationState = {
+              protocol: 'scallop',
+              obligationId,
+              ownerAddress: (oblData as any).owner ?? obligationId,
+              collaterals,
+              debts,
+              totalCollateralUsd: 0,
+              totalDebtUsd: 0,
+              liquidationThresholdCollateralUsd: 0,
+              healthFactor: Infinity,
+              isLiquidatable: false,
+              lastUpdatedMs: Date.now(),
+            };
+
+            HealthFactorEngine.evaluateObligation(state);
+            this.obligations.set(obligationId, state);
+
+            logger.info(`🔄 Refreshed obligation ${obligationId} with ${collaterals.length} collaterals and ${debts.length} debts`);
+
+            for (const listener of this.listeners) {
+              try {
+                listener(state);
+              } catch (err) {
+                logger.debug({ err }, 'Listener error');
+              }
+            }
+
+            return state;
+          }
+        }
+        return null;
+      } catch (err: any) {
+        if (err?.code === 'NOT_FOUND' || String(err).includes('NOT_FOUND') || String(err).includes('deleted')) {
+          this.knownObligationIds.delete(obligationId);
+          this.obligations.delete(obligationId);
+          logger.warn(`Obligation ${obligationId} pruned at ${new Date().toISOString()}`);
+          return null;
+        }
+        logger.debug({ obligationId, error: err }, 'Error refreshing Scallop obligation');
+        return null;
+      } finally {
+        this.inFlightRefreshes.delete(obligationId);
+      }
+    })();
+
+    this.inFlightRefreshes.set(obligationId, promise);
+    return promise;
+  }
+
+  private inferCoinMetadata(coinType: string, query?: any): { symbol: string; decimals: number; lt: number } {
+    const cfg = getCoinConfigByType(coinType);
+    const lowerType = coinType.toLowerCase();
+    const decimals = cfg?.decimals ?? (
+      lowerType.includes('btc') ? 8 :
+      lowerType.includes('eth') ? 8 :
+      lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('usd') || lowerType.includes('deep') ? 6 : 9
+    );
+    const lt = cfg?.liquidationThreshold ?? (
+      lowerType.includes('usdc') || lowerType.includes('usdt') || lowerType.includes('sui') || lowerType.includes('usd') ? 0.90 : 0.80
+    );
+    const parsedName = (query as any)?.utils?.parseCoinNameFromType?.(coinType);
+    const symbol = cfg?.symbol ?? (parsedName ? parsedName.toUpperCase() : coinType.split('::')[2]) ?? 'UNKNOWN';
+    return { symbol, decimals, lt };
+  }
+
+  public pruneStaleObligations(maxAgeMs = 10 * 60 * 1000): number {
+    const now = Date.now();
+    let count = 0;
+    for (const [id, state] of Array.from(this.obligations.entries())) {
+      if (now - state.lastUpdatedMs > maxAgeMs) {
+        this.obligations.delete(id);
+        count++;
+      }
+    }
+    if (count > 0) {
+      logger.debug(`Pruned ${count} stale Scallop obligations (> 10m old)`);
+    }
+    return count;
   }
 
   public getObligation(id: string): ObligationState | undefined {

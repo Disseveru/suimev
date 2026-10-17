@@ -3,6 +3,7 @@ import { SuiClientManager } from '../../client/suiClient.js';
 import { suiGraphQL } from '../../client/graphqlClient.js';
 import { SCALLOP_CONFIG } from '../../config/constants.js';
 import { CONFIG } from '../../config/index.js';
+import { getCoinConfigByType } from '../../config/coins.js';
 import { logger } from '../../ui/logger.js';
 
 /**
@@ -12,6 +13,13 @@ export class ScallopProtocol {
   private static instance: ScallopProtocol;
   private sdk: Scallop | null = null;
   private isInitialized = false;
+  private cachedBuilder: any | null = null;
+  private builderCreatedAt = 0;
+  private readonly BUILDER_TTL_MS = 120_000;
+  private cachedQuery: any | null = null;
+  private queryCreatedAt = 0;
+  private readonly QUERY_TTL_MS = 60_000;
+  private coinNamesCache = new Map<string, { names: string[]; expiresMs: number }>();
 
   private constructor() {}
 
@@ -41,10 +49,14 @@ export class ScallopProtocol {
 
     try {
       logger.info('Initializing Scallop SDK...');
+      const scallopRpcUrl = CONFIG.network === 'mainnet'
+        ? (CONFIG.backupRpcs.find((r) => r.includes('rpcpool') || r.includes('publicnode')) || 'https://mainnet.sui.rpcpool.com')
+        : CONFIG.rpcUrl;
+
       this.sdk = new Scallop({
         addressId: SCALLOP_CONFIG.addressId,
         network: CONFIG.network === 'mainnet' ? 'mainnet' : 'testnet',
-        fullnodeUrl: CONFIG.rpcUrl,
+        fullnodeUrl: scallopRpcUrl,
         walletAddress: CONFIG.operatorAddress,
         pythApiKey: CONFIG.pythApiKey,
       });
@@ -62,12 +74,42 @@ export class ScallopProtocol {
     return this.sdk;
   }
 
+  public async getOrCreateQuery() {
+    if (!this.sdk) {
+      await this.initialize();
+    }
+    if (!this.sdk) {
+      throw new Error('Scallop SDK is unavailable');
+    }
+    const now = Date.now();
+    if (this.cachedQuery && now - this.queryCreatedAt < this.QUERY_TTL_MS) {
+      return this.cachedQuery;
+    }
+    this.cachedQuery = await this.sdk.createScallopQuery();
+    this.queryCreatedAt = now;
+    return this.cachedQuery;
+  }
+
+  public async getOrCreateBuilder() {
+    if (!this.sdk) {
+      await this.initialize();
+    }
+    if (!this.sdk) {
+      throw new Error('Scallop SDK is unavailable');
+    }
+    const now = Date.now();
+    if (this.cachedBuilder && now - this.builderCreatedAt < this.BUILDER_TTL_MS) {
+      return this.cachedBuilder;
+    }
+    this.cachedBuilder = await this.sdk.createScallopBuilder();
+    this.builderCreatedAt = now;
+    return this.cachedBuilder;
+  }
+
   public async isObligationLocked(obligationId: string): Promise<boolean> {
     try {
-      if (this.sdk) {
-        const query = await this.sdk.createScallopQuery();
-        return await query.getObligationLocked(obligationId);
-      }
+      const query = await this.getOrCreateQuery();
+      return await query.getObligationLocked(obligationId);
     } catch {
       // Fall through to GraphQL / direct object query
     }
@@ -93,17 +135,15 @@ export class ScallopProtocol {
     isLiquidatable: boolean;
   }> {
     try {
-      if (this.sdk) {
-        const query = await this.sdk.createScallopQuery();
-        const account = await query.getObligationAccountById(obligationId);
-        if (account) {
-          const isLiquidatable = (account.totalRiskLevel >= 1.0) || (account.totalUnhealthyCollateralValue > 0);
-          return {
-            riskLevel: account.totalRiskLevel,
-            unhealthyCollateralValue: account.totalUnhealthyCollateralValue,
-            isLiquidatable,
-          };
-        }
+      const query = await this.getOrCreateQuery();
+      const account = await query.getObligationAccountById(obligationId);
+      if (account) {
+        const isLiquidatable = (account.totalRiskLevel >= 1.0) || (account.totalUnhealthyCollateralValue > 0);
+        return {
+          riskLevel: account.totalRiskLevel,
+          unhealthyCollateralValue: account.totalUnhealthyCollateralValue,
+          isLiquidatable,
+        };
       }
     } catch {
       // Fall through to conservative default
@@ -112,24 +152,32 @@ export class ScallopProtocol {
   }
 
   public async getObligationCoinNames(obligationId: string): Promise<string[]> {
+    const cached = this.coinNamesCache.get(obligationId);
+    if (cached && Date.now() < cached.expiresMs) {
+      return cached.names;
+    }
+
     try {
-      if (this.sdk) {
-        const query = await this.sdk.createScallopQuery();
-        const oblData = await query.queryObligation(obligationId);
-        if (oblData) {
-          const coinTypes = [
-            ...oblData.collaterals.map((c: any) => c.type),
-            ...oblData.debts.map((d: any) => d.type),
-          ];
-          const names = new Set<string>();
-          for (const cType of coinTypes) {
-            const parsed = (query as any).utils?.parseCoinNameFromType?.(cType);
-            if (parsed && typeof parsed === 'string') {
-              names.add(parsed);
-            }
+      const query = await this.getOrCreateQuery();
+      const oblData = await query.queryObligation(obligationId);
+      if (oblData) {
+        const coinTypes = [
+          ...oblData.collaterals.map((c: any) => c.type),
+          ...oblData.debts.map((d: any) => d.type),
+        ];
+        const names = new Set<string>();
+        for (const cType of coinTypes) {
+          let parsed = (query as any).utils?.parseCoinNameFromType?.(cType);
+          if (!parsed) {
+            parsed = getCoinConfigByType(cType)?.scallopCoinName;
           }
-          return Array.from(names);
+          if (parsed && typeof parsed === 'string') {
+            names.add(parsed.toLowerCase());
+          }
         }
+        const result = Array.from(names);
+        this.coinNamesCache.set(obligationId, { names: result, expiresMs: Date.now() + 30_000 });
+        return result;
       }
     } catch {
       // Fall through to empty list on error
@@ -138,13 +186,7 @@ export class ScallopProtocol {
   }
 
   public async createScallopBuilder() {
-    if (!this.sdk) {
-      await this.initialize();
-    }
-    if (!this.sdk) {
-      throw new Error('Scallop SDK is unavailable');
-    }
-    return await this.sdk.createScallopBuilder();
+    return await this.getOrCreateBuilder();
   }
 }
 

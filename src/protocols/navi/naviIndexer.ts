@@ -7,6 +7,7 @@ import { ObligationState, CollateralPosition, DebtPosition } from '../../config/
 import { HealthFactorEngine } from '../../oracles/healthFactor.js';
 import { priceCache } from '../../oracles/priceCache.js';
 import { logger } from '../../ui/logger.js';
+import { normalizeSuiAddress } from '@mysten/sui/utils';
 import * as navi from '@naviprotocol/lending';
 
 export type ObligationCallback = (obligation: ObligationState) => void;
@@ -18,6 +19,7 @@ export type ObligationCallback = (obligation: ObligationState) => void;
 export class NaviIndexer {
   private knownBorrowers: Set<string> = new Set();
   private obligations: Map<string, ObligationState> = new Map();
+  private inFlightRefreshes: Map<string, Promise<ObligationState | null>> = new Map();
   private listeners: ObligationCallback[] = [];
   private isRunning = false;
   private sweepInterval: NodeJS.Timeout | null = null;
@@ -78,6 +80,19 @@ export class NaviIndexer {
 
   private handleNaviEvent(event: Record<string, unknown>): void {
     try {
+      const typeStr = (event.type as string | undefined) ?? '';
+      // Pre-filter: skip event if explicit type does not relate to borrow, deposit, incentive, or liquidation
+      if (
+        typeStr &&
+        !typeStr.includes('borrow') &&
+        !typeStr.includes('deposit') &&
+        !typeStr.includes('lending') &&
+        !typeStr.includes('incentive') &&
+        !typeStr.includes('liquidat')
+      ) {
+        return;
+      }
+
       const parsedJson = event.parsedJson as Record<string, unknown> | undefined;
       const sender = (parsedJson?.sender || parsedJson?.borrower || parsedJson?.user) as string | undefined;
 
@@ -91,80 +106,73 @@ export class NaviIndexer {
   }
 
   public addBorrower(address: string): void {
-    const normalized = address.toLowerCase();
+    let normalized: string;
+    try {
+      normalized = normalizeSuiAddress(address).toLowerCase();
+    } catch {
+      normalized = address.toLowerCase();
+    }
+    const nullAddr = '0x0000000000000000000000000000000000000000000000000000000000000000';
+    let operatorNorm = '';
+    try {
+      operatorNorm = normalizeSuiAddress(CONFIG.operatorAddress).toLowerCase();
+    } catch {
+      operatorNorm = CONFIG.operatorAddress.toLowerCase();
+    }
+
     if (
-      normalized === '0x0000000000000000000000000000000000000000000000000000000000000000' ||
+      normalized === nullAddr ||
       normalized === '0x0' ||
-      normalized === CONFIG.operatorAddress.toLowerCase()
+      normalized === operatorNorm
     ) {
       return;
     }
-    this.knownBorrowers.add(address);
+    this.knownBorrowers.add(normalized);
   }
 
   public async discoverBorrowersFromHistory(maxPages: number = 200): Promise<void> {
     try {
-      logger.info('Querying historical NAVI lending & incentive events with cursor pagination...');
+      logger.info('Querying historical NAVI lending & incentive events with cursor pagination in parallel...');
       
-      // 1. Paginate lending events
-      let lendingCursor: any = null;
-      let lendingPages = 0;
-      while (lendingPages < maxPages) {
-        try {
-          const res = await rpcManager.executeWithFallback('naviQueryLendingEvents', (client) =>
-            client.queryEvents({
-              query: { MoveModule: { package: NAVI_CONFIG.packageId, module: 'lending' } },
-              cursor: lendingCursor,
-              limit: 100,
-            })
-          );
-          lendingPages++;
-          if (res.data) {
-            for (const ev of res.data) {
-              const json = ev.parsedJson as Record<string, unknown> | undefined;
-              const sender = (json?.sender || json?.borrower || json?.user || json?.recipient) as string | undefined;
-              if (sender && typeof sender === 'string' && sender.startsWith('0x')) {
-                this.addBorrower(sender);
+      const paginateModule = async (moduleName: string): Promise<number> => {
+        let cursor: any = null;
+        let pages = 0;
+        while (pages < maxPages) {
+          try {
+            const res = await rpcManager.executeWithFallback(`naviQuery_${moduleName}`, (client) =>
+              client.queryEvents({
+                query: { MoveModule: { package: NAVI_CONFIG.packageId, module: moduleName } },
+                cursor,
+                limit: 100,
+              })
+            );
+            pages++;
+            if (res.data) {
+              for (const ev of res.data) {
+                const json = ev.parsedJson as Record<string, unknown> | undefined;
+                const sender = (json?.sender || json?.borrower || json?.user || json?.recipient) as string | undefined;
+                if (sender && typeof sender === 'string' && sender.startsWith('0x')) {
+                  this.addBorrower(sender);
+                }
               }
             }
+            if (!res.hasNextPage || !res.nextCursor) break;
+            cursor = res.nextCursor;
+          } catch (err) {
+            logger.debug({ error: err, module: moduleName }, 'Error during NAVI event pagination');
+            break;
           }
-          if (!res.hasNextPage || !res.nextCursor) break;
-          lendingCursor = res.nextCursor;
-        } catch (err) {
-          logger.debug({ error: err }, 'Error during NAVI lending event pagination');
-          break;
         }
-      }
+        return pages;
+      };
 
-      // 2. Paginate incentive_v3 events
-      let incentiveCursor: any = null;
-      let incentivePages = 0;
-      while (incentivePages < maxPages) {
-        try {
-          const res = await rpcManager.executeWithFallback('naviQueryIncentiveEvents', (client) =>
-            client.queryEvents({
-              query: { MoveModule: { package: NAVI_CONFIG.packageId, module: 'incentive_v3' } },
-              cursor: incentiveCursor,
-              limit: 100,
-            })
-          );
-          incentivePages++;
-          if (res.data) {
-            for (const ev of res.data) {
-              const json = ev.parsedJson as Record<string, unknown> | undefined;
-              const sender = (json?.sender || json?.borrower || json?.user || json?.recipient) as string | undefined;
-              if (sender && typeof sender === 'string' && sender.startsWith('0x')) {
-                this.addBorrower(sender);
-              }
-            }
-          }
-          if (!res.hasNextPage || !res.nextCursor) break;
-          incentiveCursor = res.nextCursor;
-        } catch (err) {
-          logger.debug({ error: err }, 'Error during NAVI incentive event pagination');
-          break;
-        }
-      }
+      const [lendingRes, incentiveRes] = await Promise.allSettled([
+        paginateModule('lending'),
+        paginateModule('incentive_v3'),
+      ]);
+
+      const lendingPages = lendingRes.status === 'fulfilled' ? lendingRes.value : 0;
+      const incentivePages = incentiveRes.status === 'fulfilled' ? incentiveRes.value : 0;
 
       logger.info(`Discovered ${this.knownBorrowers.size} active NAVI borrower accounts across ${lendingPages + incentivePages} historical pages`);
       await this.refreshAllBorrowers();
@@ -175,7 +183,7 @@ export class NaviIndexer {
 
   public async refreshAllBorrowers(): Promise<void> {
     const borrowers = Array.from(this.knownBorrowers);
-    const BATCH_SIZE = 10;
+    const BATCH_SIZE = 25;
     for (let i = 0; i < borrowers.length; i += BATCH_SIZE) {
       const batch = borrowers.slice(i, i + BATCH_SIZE);
       await Promise.allSettled(batch.map((b) => this.refreshBorrowerState(b)));
@@ -183,10 +191,16 @@ export class NaviIndexer {
   }
 
   public async refreshBorrowerState(borrowerAddress: string): Promise<ObligationState | null> {
-    try {
-      // Query lending positions from NAVI SDK
-      const positions = await navi.getLendingPositions(borrowerAddress);
-      if (!positions || !Array.isArray(positions)) return null;
+    const existing = this.inFlightRefreshes.get(borrowerAddress);
+    if (existing) {
+      return existing;
+    }
+
+    const promise = (async () => {
+      try {
+        // Query lending positions from NAVI SDK
+        const positions = await navi.getLendingPositions(borrowerAddress);
+        if (!positions || !Array.isArray(positions)) return null;
 
       const collaterals: CollateralPosition[] = [];
       const debts: DebtPosition[] = [];
@@ -323,8 +337,14 @@ export class NaviIndexer {
     } catch (err) {
       logger.debug({ borrowerAddress, error: err }, 'Error refreshing borrower state');
       return null;
+    } finally {
+      this.inFlightRefreshes.delete(borrowerAddress);
     }
-  }
+  })();
+
+  this.inFlightRefreshes.set(borrowerAddress, promise);
+  return promise;
+}
 
   public getObligation(borrowerAddress: string): ObligationState | undefined {
     return this.obligations.get(borrowerAddress);

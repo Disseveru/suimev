@@ -28,6 +28,7 @@ export class NaviProtocol {
   private static instance: NaviProtocol;
   private poolsByCoinType: Map<string, NaviPoolInfo> = new Map();
   private poolsById: Map<number, NaviPoolInfo> = new Map();
+  private rawPools: any[] = [];
   private isInitialized = false;
 
   private constructor() {}
@@ -88,8 +89,8 @@ export class NaviProtocol {
 
       // 2. Query pools from SDK (or API)
       const pools = await navi.getPools();
-
       if (pools && Array.isArray(pools)) {
+        this.rawPools = pools;
         for (const pool of pools) {
           if (pool.suiCoinType && pool.contract?.pool) {
             const coinCfg = getCoinConfigByType(pool.suiCoinType);
@@ -183,6 +184,10 @@ export class NaviProtocol {
 
   public getAllPools(): NaviPoolInfo[] {
     return Array.from(this.poolsByCoinType.values());
+  }
+
+  public getRawPools(): any[] {
+    return this.rawPools;
   }
 }
 
