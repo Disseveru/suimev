@@ -10,7 +10,6 @@
     "**/.vscode/**",
     "notebooks/**",
     "scripts/**",
-    ".venv/**",
     "bin/**",
     "*.log"
   ],
@@ -152,6 +151,5 @@
   ],
   "cSpell.ignoreWords": [
     "qexampleprivatekeyreplacewithyourownkeyforproduction"
-  ],
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
+  ]
 }

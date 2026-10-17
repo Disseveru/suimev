@@ -52,6 +52,10 @@ export class ZeroCapitalPtbBuilder {
     const debtAmountToRepay = opportunity.debtAmountToRepay;
 
     // Flash loan fees: NAVI and Scallop both charge 0 bps (verified via NAVI OpenAPI /api/navi/flashloan & Scallop contracts)
+    // TODO: Discrepancy Note: NAVI documentation and legacy SDK specs historically referenced a 5 bps (0.05%) flash loan fee.
+    // However, on-chain execution and current NAVI OpenAPI endpoints (`/api/navi/flashloan`) confirm that NAVI currently enforces 0 bps (fee = 0).
+    // If NAVI updates on-chain contract state to re-enable a 5 bps fee, flashLoanFeeBps should be dynamically set to 5n for NAVI,
+    // requiring totalDebtNeededToRepayLoan = debtAmountToRepay + (debtAmountToRepay * 5n) / 10000n.
     const flashLoanFeeBps = 0n;
     const estimatedFlashLoanFee = 0n;
     const totalDebtNeededToRepayLoan = debtAmountToRepay;
@@ -138,7 +142,9 @@ export class ZeroCapitalPtbBuilder {
         });
 
         // Transfer remaining collateralCoinFromBal (net profit!) and leftover dust to operator
-        tx.transferObjects([collateralCoinFromBal, leftoverDebtCoinFromBal, emptyCoin], tx.pure.address(CONFIG.operatorAddress));
+        tx.transferObjects([collateralCoinFromBal], tx.pure.address(CONFIG.operatorAddress));
+        tx.transferObjects([leftoverDebtCoinFromBal], tx.pure.address(CONFIG.operatorAddress));
+        tx.transferObjects([emptyCoin], tx.pure.address(CONFIG.operatorAddress));
 
         const debtCfg = getCoinConfigByType(debtCoinType);
         const debtDecimals = debtCfg?.decimals ?? 6;
@@ -288,6 +294,22 @@ export class ZeroCapitalPtbBuilder {
   private static lockCache: Map<string, { isLocked: boolean; expiresMs: number }> = new Map();
   private static LOCK_CACHE_TTL_MS = 10_000; // 10 seconds
 
+  // Reusable SuiPythClient instance to avoid repeated instantiation on hot paths
+  private static cachedPythClient: any = null;
+
+  private static async getPythClient(): Promise<any> {
+    if (!this.cachedPythClient) {
+      const { SuiPythClient } = await import('@pythnetwork/pyth-sui-js');
+      const { rpcManager } = await import('../client/suiClient.js');
+      this.cachedPythClient = new SuiPythClient(
+        (rpcManager.getClient() as any),
+        '0x1f9310238ee9298fb703c3419030b35b22bb1cc37113e3bb5007c99aec79e5b8', // Mainnet Pyth State ID
+        '0x31358d198147da50db32eda2562951d53cd27f59d66ceda83b06900fdfbbf528'  // Mainnet Wormhole State ID
+      );
+    }
+    return this.cachedPythClient;
+  }
+
   /**
    * High-Level Async Liquidation PTB Builder
    * Automatically updates Pyth oracles and unlocks borrow-incentive positions if needed.
@@ -382,15 +404,8 @@ export class ZeroCapitalPtbBuilder {
         const uniqueFeedIds = Array.from(new Set(feedIds));
         
         if (uniqueFeedIds.length > 0) {
-          const { SuiPythClient } = await import('@pythnetwork/pyth-sui-js');
           const { pythService } = await import('../oracles/pythService.js');
-          const { rpcManager } = await import('../client/suiClient.js');
-
-          const pythClient = new SuiPythClient(
-            (rpcManager.getClient() as any),
-            '0x1f9310238ee9298fb703c3419030b35b22bb1cc37113e3bb5007c99aec79e5b8', // Mainnet Pyth State ID
-            '0x31358d198147da50db32eda2562951d53cd27f59d66ceda83b06900fdfbbf528'  // Mainnet Wormhole State ID
-          );
+          const pythClient = await this.getPythClient();
 
           // Get binary VAA payloads using the local service
           const vaaData = await pythService.getPriceUpdateDataForPTB(uniqueFeedIds);

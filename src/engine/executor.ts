@@ -6,6 +6,10 @@ import { CONFIG } from '../config/index.js';
 import { logger } from '../ui/logger.js';
 import { priceCache } from '../oracles/priceCache.js';
 import { telemetry } from './telemetry.js';
+import { executionRouter } from '../execution/router.js';
+import { pgaFallbackBroadcaster } from '../execution/pgaFallback.js';
+import { SlippageGuard } from '../execution/slippageGuard.js';
+import { gasPriceCalibrator } from '../security/index.js';
 
 /**
  * High-Performance Transaction Executor & Gas Optimizer
@@ -40,9 +44,33 @@ export class TransactionExecutor {
       throw new Error(`Net profit ${netProfitUsd.toFixed(2)} USD is below minimum threshold ${CONFIG.minProfitUsd} USD. Aborting.`);
     }
 
+    // Safety Gate: Pre-Broadcast Slippage Guard Validation
+    const slippageValidation = SlippageGuard.validateOpportunity(
+      opportunity,
+      CONFIG.maxSlippageBps
+    );
+    if (!slippageValidation.isValid) {
+      throw new Error(
+        `Pre-broadcast Slippage Guard violation: ${slippageValidation.reason}. Aborting liquidation.`
+      );
+    }
+
+    // Safety Gate: Pre-Broadcast 95th-Percentile Gas Price Calibration Validation
+    // Explicit acceptance criterion: Execution logic explicitly calculates profitability
+    // against the 95th-percentile network gas price before broadcasting.
+    const p95Check = await gasPriceCalibrator.evaluateProfitabilityAtP95(opportunity, {
+      suiPriceUsd,
+    });
+    if (!p95Check.isProfitable) {
+      throw new Error(
+        `Pre-broadcast P95 Gas Calibration violation: ${p95Check.reason || 'Unprofitable at 95th-percentile gas price'}. Aborting liquidation.`
+      );
+    }
+
     // Set priority gas price to front-run competing searchers via Dynamic Priority Gas Auction (PGA)
+    let refGasPrice = 1000n;
     try {
-      const refGasPrice = await this.getReferenceGasPrice();
+      refGasPrice = await this.getReferenceGasPrice();
       const priorityGasPrice = this.calculatePriorityGasPrice(
         refGasPrice,
         opportunity.expectedGrossProfitUsd,
@@ -83,10 +111,13 @@ export class TransactionExecutor {
         gasCostUsd: 0.005 * suiPriceUsd,
         netProfitUsd,
         timestamp: Date.now(),
+        strategyUsed: 'soft_bundle',
+        latencyMs: Date.now() - startTime,
+        status: 'simulated',
       };
     }
 
-    // LIVE EXECUTION PATH
+    // LIVE EXECUTION PATH DELEGATED TO ExecutionRouter (Soft Bundle -> PGA Fallback)
     try {
       // Verify operator has sufficient SUI balance for gas budget (at least 2x budget per AGENTS.md §4.3)
       const minRequiredMist = BigInt(CONFIG.gasBudget) * 2n;
@@ -98,48 +129,25 @@ export class TransactionExecutor {
       }
 
       logger.info(
-        { protocol: opportunity.protocol, borrower: opportunity.obligation.ownerAddress, gasBalanceSui: gasCheck.balanceSui.toFixed(4) },
-        '🚀 BROADCASTING LIVE LIQUIDATION PTB TO SUI CONSENSUS...'
+        {
+          protocol: opportunity.protocol,
+          borrower: opportunity.obligation.ownerAddress,
+          gasBalanceSui: gasCheck.balanceSui.toFixed(4),
+        },
+        '🚀 Delegating broadcast to ExecutionRouter (Soft Bundle primary -> PGA fallback)...'
       );
 
-      // Zero-RPC Gas Object Optimization: Use locally tracked in-memory gas coin to eliminate implicit getCoins RPC round-trip
-      const cachedGas = gasManager.getGasPayment();
-      if (cachedGas) {
-        tx.setGasPayment([{
-          objectId: cachedGas.objectId,
-          version: cachedGas.version,
-          digest: cachedGas.digest,
-        }]);
-      }
+      const broadcastResult = await executionRouter.broadcast(tx, opportunity, {
+        netProfitUsd,
+        suiPriceUsd,
+        refGasPrice,
+      });
 
-      // 🏁 SEQUENTIAL FAILOVER — iterate through RPCs to bypass rate limits
-      const response = await rpcManager.executeWithFallback(
-        'signAndExecuteTransaction',
-        async (client) => {
-          return await client.signAndExecuteTransaction({
-            signer: CONFIG.operatorKeypair,
-            transaction: tx,
-            options: {
-              showEffects: true,
-              showEvents: true,
-            },
-          });
-        }
-      );
-
-      // Surgically update in-memory gas coin version and digest from execution effects in 0ms
-      gasManager.updateFromExecutionEffects(response.effects);
-
-      const digest = response.digest;
-      const status = response.effects?.status?.status;
-      const isSuccess = status === 'success';
-
-      const gasUsed = response.effects?.gasUsed;
-      const netGasMist = BigInt(gasUsed?.computationCost || '0') + BigInt(gasUsed?.storageCost || '0') - BigInt(gasUsed?.storageRebate || '0');
-      const gasUsedSui = Number(netGasMist > 0n ? netGasMist : 0n) / 1e9;
-      const gasCostUsd = gasUsedSui * suiPriceUsd;
-
+      const isSuccess = broadcastResult.status === 'success';
       const latencyMs = Date.now() - startTime;
+      const gasUsedSui = broadcastResult.gasUsedSui ?? 0.005;
+      const gasCostUsd = broadcastResult.gasCostUsd ?? gasUsedSui * suiPriceUsd;
+
       telemetry.recordExecution({
         opportunityId: opportunity.obligation.obligationId,
         protocol: opportunity.protocol,
@@ -149,8 +157,8 @@ export class TransactionExecutor {
         actualProfitUsd: isSuccess ? netProfitUsd : 0,
         gasCostSui: gasUsedSui,
         success: isSuccess,
-        digest,
-        error: response.effects?.status?.error,
+        digest: broadcastResult.digest,
+        error: broadcastResult.error,
         timestampMs: Date.now(),
         latencies: {
           evalDurationMs: 0,
@@ -163,25 +171,37 @@ export class TransactionExecutor {
 
       if (isSuccess) {
         logger.info(
-          { digest, latencyMs, netProfitUsd: netProfitUsd.toFixed(2) },
-          '🎉 LIQUIDATION EXECUTED SUCCESSFULLY ON-CHAIN!'
+          {
+            digest: broadcastResult.digest,
+            strategyUsed: broadcastResult.strategyUsed,
+            latencyMs,
+            netProfitUsd: netProfitUsd.toFixed(2),
+          },
+          '🎉 LIQUIDATION EXECUTED SUCCESSFULLY VIA EXECUTION ROUTER!'
         );
       } else {
         logger.error(
-          { digest, status, error: response.effects?.status?.error },
+          {
+            digest: broadcastResult.digest,
+            strategyUsed: broadcastResult.strategyUsed,
+            error: broadcastResult.error,
+          },
           '❌ LIQUIDATION TRANSACTION FAILED ON-CHAIN'
         );
       }
 
       return {
-        digest,
+        digest: broadcastResult.digest,
         success: isSuccess,
         opportunity,
         gasUsedSui,
         gasCostUsd,
         netProfitUsd: isSuccess ? netProfitUsd : -gasCostUsd,
         timestamp: Date.now(),
-        errorMessage: response.effects?.status?.error,
+        errorMessage: broadcastResult.error,
+        strategyUsed: broadcastResult.strategyUsed,
+        latencyMs: broadcastResult.latencyMs,
+        status: broadcastResult.status,
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -215,6 +235,9 @@ export class TransactionExecutor {
         netProfitUsd: 0,
         timestamp: Date.now(),
         errorMessage: errorMsg,
+        strategyUsed: 'pga_fallback',
+        latencyMs: Date.now() - startTime,
+        status: 'failure',
       };
     }
   }
@@ -228,27 +251,11 @@ export class TransactionExecutor {
     expectedGrossProfitUsd: number,
     suiPriceUsd: number
   ): bigint {
-    const baseMultiplier = CONFIG.gasPriceMultiplier;
-    const maxMultiplier = CONFIG.maxGasPriceMultiplier;
-
-    // Convert estimated profit in USD to SUI
-    const profitSui = expectedGrossProfitUsd / Math.max(0.1, suiPriceUsd);
-    // Allocate configured percentage of profit as a priority tip to validators
-    const tipAllocationMist = BigInt(Math.floor(profitSui * CONFIG.priorityProfitShare * 1e9));
-
-    // Typical liquidation PTB uses ~3,500,000 computation gas units on Sui
-    // Computation cost (MIST) = units * (gasPrice / 1000)
-    // Therefore additionalGasPrice = (tipAllocationMist * 1000) / estimatedUnits
-    const estimatedComputationUnits = 3_500_000n;
-    const additionalGasPrice = (tipAllocationMist * 1000n) / estimatedComputationUnits;
-
-    const calculatedGasPrice = refGasPrice + additionalGasPrice;
-    const minGasPrice = BigInt(Math.floor(Number(refGasPrice) * baseMultiplier));
-    const maxGasPrice = BigInt(Math.floor(Number(refGasPrice) * maxMultiplier));
-
-    if (calculatedGasPrice < minGasPrice) return minGasPrice;
-    if (calculatedGasPrice > maxGasPrice) return maxGasPrice;
-    return calculatedGasPrice;
+    return pgaFallbackBroadcaster.calculatePriorityGasPrice(
+      refGasPrice,
+      expectedGrossProfitUsd,
+      suiPriceUsd
+    );
   }
 
   private static cachedRefGasPrice: bigint | null = null;

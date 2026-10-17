@@ -39,6 +39,10 @@ const envSchema = z.object({
   ALCHEMY_SUI_MAINNET_RPC: optionalUrl,
   ALCHEMY_SUI_TESTNET_RPC: optionalUrl,
   SENTIO_API_KEY: optionalString,
+  SOFT_BUNDLE_ENDPOINT: z.string().url().default('https://bundle.sui-mainnet.mysticeti.io'),
+  SOFT_BUNDLE_AUTH_TOKEN: optionalString,
+  SOFT_BUNDLE_TIMEOUT_MS: z.coerce.number().default(250),
+  SOFT_BUNDLE_ENABLED: z.preprocess((val) => val === undefined ? true : val === 'true' || val === true || val === '1', z.boolean().default(true)),
 });
 
 const parsedEnv = envSchema.parse(process.env);
@@ -145,6 +149,10 @@ export const CONFIG = {
   preferredDex: parsedEnv.PREFERRED_DEX,
   pollIntervalMs: parsedEnv.POLL_INTERVAL_MS,
   logLevel: parsedEnv.LOG_LEVEL,
+  softBundleEndpoint: parsedEnv.SOFT_BUNDLE_ENDPOINT,
+  softBundleAuthToken: parsedEnv.SOFT_BUNDLE_AUTH_TOKEN,
+  softBundleTimeoutMs: parsedEnv.SOFT_BUNDLE_TIMEOUT_MS,
+  softBundleEnabled: parsedEnv.SOFT_BUNDLE_ENABLED,
 };
 
 export type AppConfig = typeof CONFIG;

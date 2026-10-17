@@ -72,6 +72,8 @@ export const CANONICAL_CETUS_POOLS: Record<string, CetusPoolDef> = {
     coinTypeA: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX',
     coinTypeB: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
   },
+  // Note: VSUI_SUI and CERT_SUI share the exact same Cetus CLMM pool (0x6c545e78638c8c1db7a48b282bb8ca79da107993fcb185f75cedc1f5adb2f535)
+  // because VSUI (0x549e...vsui) and CERT (0x549e...cert) are alias/module representations of Volo Staked SUI.
   'VSUI_SUI': {
     poolId: '0x6c545e78638c8c1db7a48b282bb8ca79da107993fcb185f75cedc1f5adb2f535',
     coinTypeA: '0x549e8b69270def3cafaf13141f315201853d90895d96706e61266b66838a3d45::vsui::VSUI',
@@ -422,11 +424,14 @@ export class CetusRouter {
         typeArguments: [coinTypeB],
         arguments: [balanceB],
       });
-      tx.moveCall({
-        target: '0x2::balance::destroy_zero',
+      // Convert unswapped balanceA to coin and sweep to operatorAddress to prevent EBadCoinValue aborts on slippage/tick dust (SEC-04/NEW-06)
+      const unusedCoinA = tx.moveCall({
+        target: '0x2::coin::from_balance',
         typeArguments: [coinTypeA],
         arguments: [balanceA],
       });
+      tx.transferObjects([unusedCoinA], tx.pure.address(CONFIG.operatorAddress));
+
       const zeroBalanceB = tx.moveCall({
         target: '0x2::balance::zero',
         typeArguments: [coinTypeB],
@@ -450,11 +455,14 @@ export class CetusRouter {
         typeArguments: [coinTypeA],
         arguments: [balanceA],
       });
-      tx.moveCall({
-        target: '0x2::balance::destroy_zero',
+      // Convert unswapped balanceB to coin and sweep to operatorAddress to prevent EBadCoinValue aborts on slippage/tick dust (SEC-04/NEW-06)
+      const unusedCoinB = tx.moveCall({
+        target: '0x2::coin::from_balance',
         typeArguments: [coinTypeB],
         arguments: [balanceB],
       });
+      tx.transferObjects([unusedCoinB], tx.pure.address(CONFIG.operatorAddress));
+
       const zeroBalanceA = tx.moveCall({
         target: '0x2::balance::zero',
         typeArguments: [coinTypeA],

@@ -3,22 +3,9 @@ import { suiClient } from '../../client/suiClient.js';
 import { COIN_CONFIGS, getCoinConfigByType, normalizeStructTag } from '../../config/coins.js';
 import { NAVI_CONFIG, NAVI_API_ENDPOINTS } from '../../config/constants.js';
 import { logger } from '../../ui/logger.js';
+import type { NaviPoolInfo } from '../../types/protocols.js';
 
-export interface NaviPoolInfo {
-  id: number;
-  coinType: string;
-  symbol: string;
-  poolContract: string;
-  reserveBalance: bigint;
-  borrowFeeBps: number;
-  supplyApy: number;
-  borrowApy: number;
-  flashloanEnabled: boolean;
-  liquidationBonus: number;
-  liquidationRatio: number;
-  liquidationThreshold: number;
-  oracleId: number;
-}
+export type { NaviPoolInfo };
 
 /**
  * NAVI Protocol Adapter

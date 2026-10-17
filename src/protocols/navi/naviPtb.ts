@@ -144,7 +144,7 @@ export class NaviPtbBuilder {
       typeArguments: [coinType],
     });
 
-    const [repayResult] = tx.moveCall({
+    const repayResult = tx.moveCall({
       target: `${NAVI_CONFIG.packageId}::lending::flash_repay_with_ctx`,
       arguments: [
         tx.object(SUI_CLOCK_OBJECT_ID),

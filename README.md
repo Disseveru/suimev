@@ -1,15 +1,13 @@
-# ⚡ SuiMEV & EVM-MEV Zero-Capital Liquidation Engine
+# ⚡ SuiMEV Zero-Capital Liquidation Engine
 
-[![Tests](https://img.shields.io/badge/tests-24%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-39%20passed-brightgreen.svg)]()
 [![Security](https://img.shields.io/badge/dependabot-0%20vulnerabilities-brightgreen.svg)]()
-[![Network](https://img.shields.io/badge/chains-Sui%20Mainnet%20%7C%20Parallel%20EVM-blue.svg)]()
+[![Network](https://img.shields.io/badge/chains-Sui%20Mainnet-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
-> **Production-grade, Zero-Capital MEV Liquidation Engine across Sui Blockchain and High-Performance Parallel EVM Networks (Monad & Sei v2).**
+> **Production-grade, Zero-Capital MEV Liquidation Engine on the Sui Blockchain.**
 >
 > On **Sui**, it monitors borrower obligations across **NAVI Protocol** and **Scallop Protocol**, tracks sub-second Pyth oracle price streams, constructs zero-contract **Programmable Transaction Blocks (PTBs)** combining Flash Loans with DEX Swaps (**Cetus CLMM** & **DeepBook v3**), simulates transactions pre-flight, and executes profitable liquidations atomically.
->
-> In **`evm-mev/`**, it deploys and orchestrates atomic zero-capital liquidations on parallel EVM chains (**Monad** & **Sei v2**) using `FlashLiquidator.sol`, leveraging Balancer Vault (0% fee) and Aave v3 flash loans.
 
 ---
 
@@ -26,15 +24,10 @@
 * **Zero-Capital Solvency & Bad Debt Guard:** Prevents gas waste by automatically detecting and discarding unexecutable historical bad debt ($0 collateral).
 * **Resilient Multi-RPC Routing:** Routes all production requests through low-latency dedicated endpoints (Alchemy Sui Mainnet, NodeInfra, Sui RPC Pool) with automatic failover and rate-limit backoff.
 
-### 2. EVM Zero-Capital Engine (`evm-mev/`)
-* **Parallel EVM Optimized:** Built specifically for parallel execution environments (**Monad** & **Sei Network v2**).
-* **FlashLiquidator Contract:** Deploys `FlashLiquidator.sol` orchestrating Balancer Vault (0% fee flash loans) and Aave v3 with atomic revert protection (`minProfit` invariant enforcement).
-* **Multi-DEX Swaps:** Integrates DragonSwap, Ambient, and Uniswap v3 for atomic collateral liquidation routing.
-
-### 3. Security & Dependency Hardening
+### 2. Security & Dependency Hardening
 * **100% Dependabot Remediation:** All 30 GitHub security advisories resolved with zero open alerts (`axios`, `uuid`, `vitest` patched).
 * **Move SDK Compatibility:** Pinned package overrides ensure seamless operation of Move Sui v2 SDK packages (`@scallop-io/sui-scallop-sdk`, `@cetusprotocol/cetus-sui-clmm-sdk`).
-* **Fully Audited Test Suite:** 24 unit and integration tests passing covering math, PTBs, oracles, routers, and simulation.
+* **Fully Audited Test Suite:** 39 unit and integration tests passing covering math, PTBs, oracles, routers, and simulation.
 
 ---
 
@@ -76,27 +69,6 @@ flowchart TD
     EXE -->|Sign & Execute| AtomicPTB
 ```
 
-### EVM Flash Liquidator Flow (`evm-mev/`)
-
-```mermaid
-flowchart TD
-    subgraph SearcherDaemon ["EVM Searcher Daemon"]
-        MON["Mempool & State Monitor (Monad / Sei v2)"] --> DETEVM["Liquidation Detector"]
-        DETEVM --> SIMEVM["Pre-Flight eth_call Simulation"]
-    end
-
-    subgraph OnChainContract ["FlashLiquidator.sol (Atomic Revert Protection)"]
-        FL1["1. Borrow Flash Loan (Balancer 0% / Aave v3)"]
-        LC1["2. liquidationCall (Yei Finance / Aave v3 / Curvance)"]
-        SW1["3. Atomic DEX Swap (DragonSwap / Ambient / Uniswap v3)"]
-        RP1["4. Repay Flash Loan Principal + Fee"]
-        PR1["5. Verify minProfit Invariant & Transfer Surplus to Operator"]
-        FL1 --> LC1 --> SW1 --> RP1 --> PR1
-    end
-
-    SIMEVM -->|Net Profit >= MinProfit| EXEEVM["Broadcast PGA / Flashbots"]
-    EXEEVM --> OnChainContract
-```
 
 ---
 
@@ -234,36 +206,7 @@ npm run replay <TRANSACTION_DIGEST>
 
 ### 6. Run Automated Test Suite
 
-Executes 24 unit and integration tests covering math, PTBs, oracles, routers, devInspect/dryRun simulation, and Sentio bridge:
-
-```bash
-npm test
-```
-
----
-
-## ⚡ Quick Start (EVM Engine - `evm-mev/`)
-
-Navigate to the EVM sub-project:
-
-```bash
-cd evm-mev
-npm install
-```
-
-### 1. Check Network Status (Monad / Sei v2)
-
-```bash
-npm run status
-```
-
-### 2. Pre-Flight Zero-Capital Simulation
-
-```bash
-npm run simulate
-```
-
-### 3. Run EVM Test Suite
+Executes 39 unit and integration tests covering math, PTBs, oracles, routers, devInspect/dryRun simulation, and Sentio bridge:
 
 ```bash
 npm test
@@ -289,17 +232,14 @@ Measured on Node.js v26.7.0 (AMD Ryzen 9 / Intel Core i9 class processor):
 suimev/
 ├── src/                          # Sui MEV Liquidator Core
 │   ├── config/                   # Zod environment validation, coins, shared objects
+│   ├── types/                    # Canonical type interfaces (config, protocols, obligations, execution, security)
 │   ├── client/                   # Multi-RPC client, WebSocket subscribers, failover
 │   ├── oracles/                  # Price cache, Pyth Hermes stream, health factor math
 │   ├── protocols/                # NAVI, Scallop, and DEX (Cetus & DeepBook) routers
 │   ├── engine/                   # Obligation registry, PTB builder, simulator, executor
 │   ├── ui/                       # Real-time terminal telemetry dashboard & logger
 │   └── cli/                      # CLI commands (start, scan, simulate, benchmark)
-├── evm-mev/                      # Parallel EVM Liquidation Engine (Monad & Sei v2)
-│   ├── contracts/                # FlashLiquidator.sol (Balancer / Aave v3 atomic liquidator)
-│   ├── src/                      # EVM searcher daemon, ABI loaders, simulation
-│   └── tests/                    # EVM liquidation & revert protection unit tests
-├── tests/                        # Sui unit & integration tests (24 passing)
+├── tests/                        # Sui unit & integration tests (39 passing)
 ├── dist/                         # Compiled production ESM build
 ├── .env.example                  # Environment configuration template
 ├── package.json

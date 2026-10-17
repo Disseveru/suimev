@@ -27,9 +27,3 @@ jobs:
         npm run audit:types
         npm test
 
-    - name: EVM-MEV - Install and Test
-      run: |
-        cd evm-mev
-        npm install
-        npm run audit:types
-        npm test

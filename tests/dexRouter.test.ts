@@ -110,4 +110,18 @@ describe('DEX Routers (Cetus CLMM & DeepBook v3)', () => {
     expect(moveCalls.length).toBeGreaterThanOrEqual(2); // coin::zero + pool::swap_exact_base_for_quote
     expect(transfers.length).toBeGreaterThanOrEqual(1); // Leftover and DEEP fee swept to operator
   });
+
+  it('should verify no destroy_zero calls exist in Cetus addSwap / addDirectSwap PTB commands', () => {
+    const tx = new Transaction();
+    const mockInputCoin = tx.object('0x1111111111111111111111111111111111111111111111111111111111111111');
+    const quote = CetusRouter.getQuote(USDC_TYPE, SUI_TYPE, 100_000_000n, 100);
+
+    CetusRouter.addSwap(tx, quote, mockInputCoin);
+
+    const commands = tx.getData().commands;
+    const destroyZeroCalls = commands.filter(
+      (c: any) => c.$kind === 'MoveCall' && c.target === '0x2::balance::destroy_zero'
+    );
+    expect(destroyZeroCalls.length).toBe(0);
+  });
 });

@@ -13,6 +13,8 @@ import { TransactionExecutor } from './executor.js';
 import { gasManager } from '../client/gasManager.js';
 import { CetusRouter } from '../protocols/dex/cetusRouter.js';
 import { logger } from '../ui/logger.js';
+import { transactionBatcher, SlippageGuard } from '../execution/index.js';
+import { gasPriceCalibrator } from '../security/index.js';
 
 /**
  * Main MEV Liquidation Searcher Daemon
@@ -39,6 +41,9 @@ export class LiquidationSearcher {
 
   constructor() {}
 
+  private priceTickTimer: NodeJS.Timeout | null = null;
+  private tickInterval: NodeJS.Timeout | null = null;
+
   public async start(): Promise<void> {
     if (this.isRunning) return;
     this.isRunning = true;
@@ -49,6 +54,10 @@ export class LiquidationSearcher {
     logger.info(`Operator: ${CONFIG.operatorAddress}`);
     logger.info(`Protocols: ${CONFIG.protocols.join(', ')}`);
     logger.info(`Min Profit Threshold: $${CONFIG.minProfitUsd}`);
+
+    // Boot Rehydration: Recover active obligations from persistent SQLite storage
+    const loaded = obligationRegistry.loadFromPersistence();
+    logger.info({ count: loaded }, `Boot rehydration: restored ${loaded} active obligation(s) from SQLite persistence`);
 
     // Gas Readiness Check & Zero-RPC Gas Coin Cache Initialization
     await gasManager.initialize();
@@ -92,7 +101,7 @@ export class LiquidationSearcher {
     await pythService.start(1000);
 
     // Continuous tick loop
-    setInterval(() => {
+    this.tickInterval = setInterval(() => {
       this.updateStats();
       this.processImmediateTargets();
     }, 1000);
@@ -100,6 +109,14 @@ export class LiquidationSearcher {
 
   public stop(): void {
     this.isRunning = false;
+    if (this.tickInterval) {
+      clearInterval(this.tickInterval);
+      this.tickInterval = null;
+    }
+    if (this.priceTickTimer) {
+      clearTimeout(this.priceTickTimer);
+      this.priceTickTimer = null;
+    }
     pythService.stop();
     naviIndexer.stop();
     scallopIndexer.stop();
@@ -117,10 +134,14 @@ export class LiquidationSearcher {
   }
 
   private handlePriceTick(): void {
-    const newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
-    if (newlyUndercollateralized.length > 0) {
-      this.processImmediateTargets();
-    }
+    if (this.priceTickTimer) return;
+    this.priceTickTimer = setTimeout(() => {
+      this.priceTickTimer = null;
+      const newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
+      if (newlyUndercollateralized.length > 0) {
+        this.processImmediateTargets();
+      }
+    }, 150);
   }
 
   private updateStats(): void {
@@ -141,11 +162,32 @@ export class LiquidationSearcher {
 
     try {
       const targets = obligationRegistry.getImmediateTargets();
+      const opportunities: LiquidationOpportunity[] = [];
+
       for (const target of targets) {
         const opp = HealthFactorEngine.findBestLiquidationOpportunity(target);
         if (opp && opp.expectedGrossProfitUsd >= CONFIG.minProfitUsd) {
-          await this.executeLiquidationPipeline(opp);
+          const slippageCheck = SlippageGuard.validateOpportunity(opp, CONFIG.maxSlippageBps);
+          if (slippageCheck.isValid) {
+            opportunities.push(opp);
+          }
         }
+      }
+
+      if (opportunities.length > 1) {
+        logger.info(
+          { count: opportunities.length },
+          '⚡ Multiple liquidation opportunities detected — evaluating multi-obligation PTB batch'
+        );
+        try {
+          transactionBatcher.batchOpportunities(opportunities);
+        } catch {
+          // Fall back to sequential execution if atomic batch constraints cannot be satisfied
+        }
+      }
+
+      for (const opp of opportunities) {
+        await this.executeLiquidationPipeline(opp);
       }
     } finally {
       this.isProcessingQueue = false;
@@ -168,15 +210,45 @@ export class LiquidationSearcher {
         '🎯 LIQUIDATION OPPORTUNITY IDENTIFIED — BUILDING ZERO-CAPITAL PTB'
       );
 
+      // Security Hardening (Requirement R4): Pre-broadcast P95 Gas Price Calibration Check
+      // Evaluates: EstimatedProfit_P95 = GrossBonusUsd - SwapFeesUsd - GasCostUsd(P95)
+      // Evaluated before PTB construction and broadcast to prevent wasted compute/RPC round trips
+      const p95Check = await gasPriceCalibrator.evaluateProfitabilityAtP95(opportunity);
+      if (!p95Check.isProfitable) {
+        logger.warn(
+          {
+            borrower: opportunity.obligation.ownerAddress,
+            grossProfitUsd: p95Check.grossProfitUsd,
+            swapFeeUsd: p95Check.estimatedSwapFeeUsd,
+            p95GasCostUsd: p95Check.p95GasCostUsd,
+            calibratedNetProfitUsd: p95Check.calibratedNetProfitUsd,
+            thresholdUsd: p95Check.thresholdUsd,
+            reason: p95Check.reason,
+          },
+          '🚫 Liquidation rejected: Opportunity is unprofitable at 95th-percentile network gas price'
+        );
+        return false;
+      }
+
       // STEP 1: Construct atomic PTB (with async oracle freshness and unlock handling)
       const builtPtb = await ZeroCapitalPtbBuilder.buildLiquidationPTBAsync(opportunity);
 
       // STEP 2: Dual-Tier Execution: Fast-Path vs Safe-Path Simulation
       // For high-confidence liquidations (Hf <= 0.985), bypass devInspect simulation to save ~180ms in the MEV race
-      let simulatedProfitUsd = opportunity.expectedGrossProfitUsd;
+      let simulatedProfitUsd = p95Check.calibratedNetProfitUsd;
       const isHighConfidence = opportunity.obligation.healthFactor <= 0.985 && !CONFIG.dryRun;
 
       if (isHighConfidence) {
+        try {
+          // Lightweight PTB construction check before fast-path execution to ensure PTB validity before skipping devInspect
+          builtPtb.tx.getData();
+        } catch (ptbErr: any) {
+          logger.warn(
+            { error: ptbErr?.message || String(ptbErr) },
+            'Fast-path PTB construction check failed — invalid PTB structure'
+          );
+          return false;
+        }
         logger.info(
           { hf: opportunity.obligation.healthFactor.toFixed(4) },
           '⚡ FAST-PATH TRIGGERED: High-confidence liquidation (Hf <= 0.985), bypassing devInspect simulation to save ~180ms'
@@ -221,8 +293,8 @@ export class LiquidationSearcher {
       logger.error(
         {
           error: err?.message || String(err),
+          code: err?.code,
           stack: err?.stack,
-          details: JSON.stringify(err, Object.getOwnPropertyNames(err), 2),
         },
         'Unhandled error in liquidation pipeline'
       );

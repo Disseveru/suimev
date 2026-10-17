@@ -31,3 +31,11 @@ bin/tenderly*
 sui-scallop-sdk/
 
 
+
+data/
+*.db
+*.db-shm
+*.db-wal
+.agents/
+temp_challenger_m5_db/
+

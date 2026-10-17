@@ -191,8 +191,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     name: 'Walrus Token',
     decimals: 9,
     coinType: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
-    // Verified Pyth WAL/USD feed ID on Sui mainnet
-    pythPriceFeedId: '0x9b77ff3b3b44c6f9e9e42e0fbeedf5a62b88d71e64e2f91f9fae3e8f1e5c5d2d4',
+    pythPriceFeedId: '',
     scallopCoinName: 'wal',
     liquidationThreshold: 0.70,
     liquidationBonus: 0.08,
@@ -255,7 +254,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'AUSD',
     name: 'Agora USD',
     decimals: 6,
-    coinType: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2abda49b5c802863f6d38e::ausd::AUSD',
+    coinType: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2abda22b25c3bd51b65e76::ausd::AUSD',
     pythPriceFeedId: '0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a',
     naviPoolId: 21,
     scallopCoinName: 'ausd',
@@ -266,7 +265,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'NS',
     name: 'SuiNS Token',
     decimals: 6,
-    coinType: '0x5145494a5f5100e64540b0aa69f194e9504863642a4336a5ea23821e5faab34b::ns::NS',
+    coinType: '0x5145494a5f5100e64540b1a052d5bf52327702d8471b425cb43e67db57936ac0::ns::NS',
     pythPriceFeedId: '0x29bdd5248234e33bd93d3b81100b5fa32eaa5997843847e2c2cb16d7c6d9f7ff',
     naviPoolId: 17,
     scallopCoinName: 'ns',
@@ -288,7 +287,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'BLUB',
     name: 'Blub Token',
     decimals: 2,
-    coinType: '0xfa7ff699e97e1825438810deea99f38f3cb7502c971514b3d716437af364b9e9::blub::BLUB',
+    coinType: '0xfa7ac3951fdca92c5200d468d31a365eb03b2be9936fde615e69f0c1274ad3a0::BLUB::BLUB',
     pythPriceFeedId: '',
     naviPoolId: 25,
     scallopCoinName: 'blub',
@@ -299,7 +298,7 @@ export const COIN_CONFIGS: Record<string, CoinMetadataConfig> = {
     symbol: 'FUD',
     name: 'Fud the Pug',
     decimals: 5,
-    coinType: '0x76cb819b01abed502bee8a702b4c2d5427320485aa2310f5671d6d13ec3079b7::fud::FUD',
+    coinType: '0x76cb819b01abed502bee8a702b4c2d5f5074744637f812d9047f60effa637742::fud::FUD',
     pythPriceFeedId: '',
     naviPoolId: 26,
     scallopCoinName: 'fud',
@@ -370,6 +369,22 @@ for (const config of Object.values(COIN_CONFIGS)) {
   // Only register Pyth ID if it's a valid non-empty feed ID
   if (config.pythPriceFeedId) {
     COIN_BY_PYTH_ID_MAP.set(config.pythPriceFeedId.toLowerCase(), config);
+  }
+}
+
+// Dual-registration alias mappings for old addresses (AUSD, NS, BLUB, FUD) to preserve backwards compatibility with indexers
+const COIN_ALIASES: Record<string, string> = {
+  '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2abda49b5c802863f6d38e::ausd::AUSD': 'AUSD',
+  '0x5145494a5f5100e64540b0aa69f194e9504863642a4336a5ea23821e5faab34b::ns::NS': 'NS',
+  '0xfa7ff699e97e1825438810deea99f38f3cb7502c971514b3d716437af364b9e9::blub::BLUB': 'BLUB',
+  '0x76cb819b01abed502bee8a702b4c2d5f5074744637f812d9047f60effa637742::fud::FUD': 'FUD',
+};
+
+for (const [oldType, symbol] of Object.entries(COIN_ALIASES)) {
+  const config = COIN_CONFIGS[symbol];
+  if (config) {
+    COIN_BY_TYPE_MAP.set(normalizeStructTag(oldType), config);
+    COIN_BY_TYPE_MAP.set(oldType.toLowerCase(), config);
   }
 }
 
