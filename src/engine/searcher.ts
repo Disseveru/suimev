@@ -17,6 +17,7 @@ import { rpcManager } from '../client/suiClient.js';
 import { priceCache } from '../oracles/priceCache.js';
 import { logger } from '../ui/logger.js';
 import { telemetryBridge } from './telemetryBridge.js';
+import { MaxHeap } from '../utils/heap.js';
 
 /**
  * Main MEV Liquidation Searcher Daemon
@@ -27,7 +28,8 @@ export class LiquidationSearcher {
   private isProcessingQueue = false;
   private isTickRunning = false;
   private tickInterval: NodeJS.Timeout | null = null;
-  private queue: LiquidationOpportunity[] = [];
+  private queue: MaxHeap<string> = new MaxHeap<string>();
+  private queuedOpportunities: Map<string, LiquidationOpportunity> = new Map();
   private inFlightObligations: Set<string> = new Set();
   private lastOnDemandRefreshByObligation: Map<string, number> = new Map();
   private activePipelineCount = 0;
@@ -49,6 +51,39 @@ export class LiquidationSearcher {
   };
 
   constructor() {}
+
+  private enqueueOpportunity(opportunity: LiquidationOpportunity): void {
+    const obligationId = opportunity.obligation.obligationId;
+    const existing = this.queuedOpportunities.get(obligationId);
+
+    if (existing && existing.expectedGrossProfitUsd >= opportunity.expectedGrossProfitUsd) {
+      return;
+    }
+
+    if (existing) {
+      this.queue.remove(obligationId);
+    }
+
+    this.queue.push(obligationId, Number(opportunity.expectedGrossProfitUsd) || 0);
+    this.queuedOpportunities.set(obligationId, opportunity);
+  }
+
+  private dequeueOpportunity(): LiquidationOpportunity | undefined {
+    const obligationId = this.queue.popMax();
+    if (!obligationId) return undefined;
+    const opportunity = this.queuedOpportunities.get(obligationId);
+    this.queuedOpportunities.delete(obligationId);
+    return opportunity;
+  }
+
+  private hasQueuedOpportunity(obligationId: string): boolean {
+    return this.queuedOpportunities.has(obligationId);
+  }
+
+  private clearQueue(): void {
+    this.queue.clear();
+    this.queuedOpportunities.clear();
+  }
 
   public async start(): Promise<void> {
     if (this.isRunning) return;
@@ -127,7 +162,7 @@ export class LiquidationSearcher {
       clearInterval(this.tickInterval);
       this.tickInterval = null;
     }
-    this.queue = [];
+    this.clearQueue();
     this.inFlightObligations.clear();
     this.activePipelineCount = 0;
     pythService.stop();
@@ -158,12 +193,10 @@ export class LiquidationSearcher {
 
       let newlyUndercollateralized = obligationRegistry.reevaluateHotWatchlist();
 
-      // If Bitcoin oracle updated, track volatility and scan ALL obligations holding hBTC/BTC collateral
-      // to capture cascading liquidations immediately from steep BTC price drops
       if (isBtcUpdate) {
         if (price !== undefined && price > 0) {
           const { dropBps, isDrop } = priceCache.recordBtcPriceUpdate(price);
-          if (isDrop && dropBps >= 50) { // >= 0.50% drop
+          if (isDrop && dropBps >= 50) {
             logger.warn(
               { symbol: symbol ?? 'BTC', price, dropBps },
               `📉 Steep BTC drop detected (-${(dropBps / 100).toFixed(2)}%) — triggering full hBTC collateral cascade sweep`
@@ -204,28 +237,24 @@ export class LiquidationSearcher {
   }
 
   /**
-   * Process all currently liquidatable obligations using a bounded concurrency queue
+   * Process all currently liquidatable obligations using a bounded concurrency queue.
+   * Queue ordering is maintained by a max-heap keyed by expected gross profit to avoid
+   * repeated sort calls on a large array.
    */
   public async processImmediateTargets(): Promise<void> {
     const targets = obligationRegistry.getImmediateTargets();
-    if (targets.length === 0 && this.queue.length === 0) {
+    if (targets.length === 0 && this.queuedOpportunities.size === 0) {
       return;
     }
 
-    // Snapshot collection before iterating per AGENTS.md Rule 5
-    const targetList = Array.from(targets);
-    for (const target of targetList) {
+    for (const target of targets) {
       const oblId = target.obligationId;
-      if (this.inFlightObligations.has(oblId)) {
-        continue;
-      }
-      if (this.queue.some((item) => item.obligation.obligationId === oblId)) {
+      if (this.inFlightObligations.has(oblId) || this.hasQueuedOpportunity(oblId)) {
         continue;
       }
 
       const opp = HealthFactorEngine.findBestLiquidationOpportunity(target);
       if (opp && opp.expectedGrossProfitUsd >= CONFIG.minProfitUsd) {
-        // Price Freshness & Stale Fallback Guard per audit plan & AGENTS.md §8
         if (!priceCache.arePricesFreshForOpportunity(opp)) {
           const lastRefresh = this.lastOnDemandRefreshByObligation.get(oblId) ?? 0;
           if (Date.now() - lastRefresh > 15_000) {
@@ -239,27 +268,23 @@ export class LiquidationSearcher {
           continue;
         }
 
-        this.queue.push(opp);
+        this.enqueueOpportunity(opp);
       }
     }
-
-    // Sort queue by gross profit descending (highest MEV yield executed first)
-    this.queue.sort((a, b) => b.expectedGrossProfitUsd - a.expectedGrossProfitUsd);
 
     this.drainQueue();
   }
 
   /**
-   * Drain opportunity queue ensuring concurrency never exceeds MAX_CONCURRENT_PIPELINES
-   * and no burst arrivals or dropped opportunities occur.
+   * Drain opportunity queue ensuring concurrency never exceeds MAX_CONCURRENT_PIPELINES.
    */
   private drainQueue(): void {
     if (this.isProcessingQueue) return;
     this.isProcessingQueue = true;
 
     try {
-      while (this.activePipelineCount < this.MAX_CONCURRENT_PIPELINES && this.queue.length > 0) {
-        const opp = this.queue.shift();
+      while (this.activePipelineCount < this.MAX_CONCURRENT_PIPELINES) {
+        const opp = this.dequeueOpportunity();
         if (!opp) break;
 
         const oblId = opp.obligation.obligationId;
