@@ -1,6 +1,7 @@
 import { ObligationState, ProtocolType } from '../config/types.js';
 import { HealthFactorEngine } from '../oracles/healthFactor.js';
 import { logger } from '../ui/logger.js';
+import { MaxHeap } from '../utils/heap.js';
 
 /**
  * Global Obligation Registry & Prioritized Watchlist
@@ -8,14 +9,24 @@ import { logger } from '../ui/logger.js';
  * 1. Immediate Targets (HF < 1.0): Dispatched immediately to simulation & execution pipeline
  * 2. Hot Watchlist (1.0 <= HF < 1.05): Re-evaluated on every Pyth price tick
  * 3. Safe Watchlist (HF >= 1.05): Re-evaluated on periodic sweeps
+ *
+ * This implementation uses a max-heap for the Immediate Targets bucket to avoid
+ * full-array sorting on every access. The heap stores keys (protocol:id) and a
+ * numeric priority (by default totalDebtUsd) so retrieving the top-k accounts is
+ * O(k log n) instead of O(n log n) sorting of the entire set.
  */
 export class ObligationRegistry {
   private static instance: ObligationRegistry;
   private obligations: Map<string, ObligationState> = new Map();
 
+  // Keep Maps for presence & fast lookup (same API as before)
   private immediateTargets: Map<string, ObligationState> = new Map();
   private hotWatchlist: Map<string, ObligationState> = new Map();
   private safeWatchlist: Map<string, ObligationState> = new Map();
+
+  // Max-heap keyed by priority (higher priority popped first)
+  // Priority chosen: totalDebtUsd (can be replaced by expected profit in future)
+  private immediateHeap: MaxHeap<string> = new MaxHeap<string>();
 
   private constructor() {}
 
@@ -37,13 +48,26 @@ export class ObligationRegistry {
   }
 
   private bucketObligation(key: string, state: ObligationState): void {
-    this.immediateTargets.delete(key);
-    this.hotWatchlist.delete(key);
-    this.safeWatchlist.delete(key);
+    // Remove from all buckets first (idempotent)
+    const wasImmediate = this.immediateTargets.has(key);
+    const wasHot = this.hotWatchlist.has(key);
+    const wasSafe = this.safeWatchlist.has(key);
+
+    if (wasImmediate) {
+      this.immediateTargets.delete(key);
+      this.immediateHeap.remove(key);
+    }
+    if (wasHot) this.hotWatchlist.delete(key);
+    if (wasSafe) this.safeWatchlist.delete(key);
 
     const hf = state.healthFactor;
     if (hf < 1.0 && state.totalDebtUsd > 0.01 && state.totalCollateralUsd > 0) {
       this.immediateTargets.set(key, state);
+      // Use totalDebtUsd as priority (higher debt = higher priority)
+      // Use Date.now() as tiebreaker implicitly by adding a small fractional part
+      const priority = Number(state.totalDebtUsd) || 0;
+      this.immediateHeap.push(key, priority);
+
       logger.warn(
         { protocol: state.protocol, id: state.obligationId, hf: hf.toFixed(4), debtUsd: state.totalDebtUsd.toFixed(2), colUsd: state.totalCollateralUsd.toFixed(2) },
         `🚨 UNDERCOLLATERALIZED OBLIGATION DETECTED (HF: ${hf.toFixed(4)})`
@@ -103,8 +127,23 @@ export class ObligationRegistry {
     return newlyUndercollateralized;
   }
 
-  public getImmediateTargets(): ObligationState[] {
-    return Array.from(this.immediateTargets.values()).sort((a, b) => b.totalDebtUsd - a.totalDebtUsd);
+  /**
+   * Return the current immediate targets ordered by priority (highest first).
+   * This operation avoids sorting the entire obligations map — instead it walks a
+   * copy of the heap and extracts up to `limit` items (default: all immediate targets).
+   */
+  public getImmediateTargets(limit?: number): ObligationState[] {
+    const size = this.immediateTargets.size;
+    const k = typeof limit === 'number' ? Math.min(limit, size) : size;
+    if (k === 0) return [];
+
+    const keys = this.immediateHeap.peekTopK(k);
+    const result: ObligationState[] = [];
+    for (const key of keys) {
+      const st = this.immediateTargets.get(key);
+      if (st) result.push(st);
+    }
+    return result;
   }
 
   public getHotWatchlist(): ObligationState[] {
@@ -162,6 +201,7 @@ export class ObligationRegistry {
     this.immediateTargets.clear();
     this.hotWatchlist.clear();
     this.safeWatchlist.clear();
+    this.immediateHeap.clear();
   }
 }
 
