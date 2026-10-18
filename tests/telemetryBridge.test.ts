@@ -56,7 +56,7 @@ describe('Engine Telemetry State Bridge (Requirement R2 / Milestone 2)', () => {
       expect(typeof payload.operator.gasTankBalanceMist).toBe('string');
 
       // Financials section
-      expect(typeof payload.financials.netRealizedPnlUsd).toBe('number');
+      expect(payload.financials.netRealizedPnlUsd).toBeNull();
       expect(typeof payload.financials.cumulativeGasSpentSui).toBe('number');
       expect(typeof payload.financials.successfulLiquidations).toBe('number');
       expect(typeof payload.financials.failedLiquidations).toBe('number');
@@ -229,7 +229,7 @@ describe('Engine Telemetry State Bridge (Requirement R2 / Milestone 2)', () => {
           borrower: `0xBorrower_${i}`,
           debtRepaid: `${i * 100} USDC`,
           collateralSeized: `${i * 50} SUI`,
-          netProfitUsd: i * 5,
+          estimatedNetProfitUsd: i * 5,
           gasCostSui: 0.01,
           txDigest: `digest_${i}`,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/digest_${i}`,
@@ -260,7 +260,7 @@ describe('Engine Telemetry State Bridge (Requirement R2 / Milestone 2)', () => {
         borrower: '0xTestBorrower',
         debtRepaid: '1,000.00 USDC',
         collateralSeized: '500.00 SUI',
-        netProfitUsd: 25.5,
+        estimatedNetProfitUsd: 25.5,
         gasCostSui: 0.005,
         txDigest: 'DRY_RUN_ABC123',
         txDigestLink: 'https://suiscan.xyz/mainnet/tx/DRY_RUN_ABC123',
@@ -281,7 +281,7 @@ describe('Engine Telemetry State Bridge (Requirement R2 / Milestone 2)', () => {
         borrower: '0xTestBorrower',
         debtRepaid: '100 USDC',
         collateralSeized: '50 SUI',
-        netProfitUsd: 10,
+        estimatedNetProfitUsd: 10,
         gasCostSui: 0.01,
         txDigest: 'digest_1',
         txDigestLink: 'https://suiscan.xyz/mainnet/tx/digest_1',
@@ -402,7 +402,7 @@ describe('Engine Telemetry State Bridge (Requirement R2 / Milestone 2)', () => {
         borrower: '0xImmediateReflexBorrower',
         debtRepaid: '500 USDC',
         collateralSeized: '250 SUI',
-        netProfitUsd: 15.0,
+        estimatedNetProfitUsd: 15.0,
         gasCostSui: 0.01,
         txDigest: '0xDigestReflex',
         txDigestLink: 'https://suiscan.xyz/mainnet/tx/0xDigestReflex',
@@ -418,7 +418,7 @@ describe('Engine Telemetry State Bridge (Requirement R2 / Milestone 2)', () => {
         borrower: '0xSearcherBorrower',
         debtRepaid: '2,000 USDC',
         collateralSeized: '1,000 SUI',
-        netProfitUsd: 35.0,
+        estimatedNetProfitUsd: 35.0,
         gasCostSui: 0.02,
         txDigest: '0xDigestSearcher',
         txDigestLink: 'https://suiscan.xyz/mainnet/tx/0xDigestSearcher',

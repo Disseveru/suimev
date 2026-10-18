@@ -368,11 +368,20 @@ async function main() {
           continue;
         }
 
+        if (CONFIG.dryRun) {
+          console.log(chalk.yellow('DRY_RUN is enabled: simulation passed; no transaction was signed or broadcast.'));
+          process.exit(0);
+        }
+
         console.log(chalk.bold.green('🚀 Pre-flight simulation passed! Executing liquidation...'));
-        const result = await TransactionExecutor.execute(built.tx, opp, sim.netProfitUsd);
-        console.log(chalk.bold(`Digest: ${result.digest}`));
+        const result = await TransactionExecutor.execute(built.tx, opp);
+        if (result.digest) console.log(chalk.bold(`Digest: ${result.digest}`));
         console.log(chalk.bold(`Success: ${result.success ? chalk.green('TRUE') : chalk.red('FALSE')}`));
-        console.log(`Net Profit: $${result.netProfitUsd.toFixed(2)}`);
+        console.log(
+          `Estimated Net Profit: ${result.estimatedNetProfitUsd === null
+            ? 'unavailable'
+            : `$${result.estimatedNetProfitUsd.toFixed(2)}`}`
+        );
         console.log(`Gas Used: ${result.gasUsedSui.toFixed(4)} SUI ($${result.gasCostUsd.toFixed(4)})`);
         if (result.errorMessage) {
           console.log(chalk.red(`Error: ${result.errorMessage}`));

@@ -13,7 +13,7 @@ export interface TelemetryOperator {
 }
 
 export interface TelemetryFinancials {
-  netRealizedPnlUsd: number;
+  netRealizedPnlUsd: number | null;
   cumulativeGasSpentSui: number;
   successfulLiquidations: number;
   failedLiquidations: number;
@@ -45,7 +45,7 @@ export interface TelemetryRecentLiquidationItem {
   borrower: string;
   debtRepaid: string;
   collateralSeized: string;
-  netProfitUsd: number;
+  estimatedNetProfitUsd: number;
   gasCostSui: number;
   txDigest: string;
   txDigestLink: string;
@@ -97,7 +97,9 @@ export function validateTelemetryPayload(data: unknown): { valid: boolean; error
   if (!p.financials || typeof p.financials !== 'object') {
     errors.push('Missing financials section');
   } else {
-    if (typeof p.financials.netRealizedPnlUsd !== 'number') errors.push('Invalid netRealizedPnlUsd');
+    if (p.financials.netRealizedPnlUsd !== null && typeof p.financials.netRealizedPnlUsd !== 'number') {
+      errors.push('Invalid netRealizedPnlUsd');
+    }
     if (typeof p.financials.cumulativeGasSpentSui !== 'number') errors.push('Invalid cumulativeGasSpentSui');
     if (typeof p.financials.successfulLiquidations !== 'number') errors.push('Invalid successfulLiquidations');
     if (typeof p.financials.failedLiquidations !== 'number') errors.push('Invalid failedLiquidations');

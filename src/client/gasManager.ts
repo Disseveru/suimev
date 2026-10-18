@@ -1,5 +1,5 @@
 import { CONFIG } from '../config/index.js';
-import { rpcManager } from './suiClient.js';
+import { grpcManager } from './grpcClient.js';
 import { suiGraphQL } from './graphqlClient.js';
 import { logger } from '../ui/logger.js';
 
@@ -90,22 +90,22 @@ export class GasManager {
     }
 
     try {
-      const coins = await rpcManager.executeWithFallback('getGasCoins', (client) =>
-        client.getCoins({
-          owner: CONFIG.operatorAddress,
-          coinType: '0x2::sui::SUI',
-        })
-      );
+      await grpcManager.checkHealth();
+      const coins = await grpcManager.getClient().listCoins({
+        owner: CONFIG.operatorAddress,
+        coinType: '0x2::sui::SUI',
+        limit: 50,
+      });
 
-      if (coins.data && coins.data.length > 0) {
-        const sorted = [...coins.data].sort((a, b) => {
+      if (coins.objects.length > 0) {
+        const sorted = [...coins.objects].sort((a, b) => {
           const diff = BigInt(b.balance) - BigInt(a.balance);
           return diff > 0n ? 1 : diff < 0n ? -1 : 0;
         });
         const primary = sorted[0];
 
         this.primaryGasCoin = {
-          objectId: primary.coinObjectId,
+          objectId: primary.objectId,
           version: String(primary.version),
           digest: primary.digest,
           balanceMist: BigInt(primary.balance),
@@ -145,32 +145,46 @@ export class GasManager {
   /**
    * Surgically update gas coin version and digest from transaction execution effects in 0ms
    */
-  public updateFromExecutionEffects(effects: any): void {
-    if (!effects) return;
-
-    try {
-      // In Sui execution effects, the gas object is updated in effects.gasObject or effects.mutated
-      const gasObj = effects.gasObject;
-      if (this.primaryGasCoin && gasObj?.reference?.objectId && gasObj.reference.objectId === this.primaryGasCoin.objectId) {
-        this.primaryGasCoin.version = String(gasObj.reference.version);
-        this.primaryGasCoin.digest = gasObj.reference.digest;
-        this.primaryGasCoin.lastUpdatedMs = Date.now();
-        return;
-      }
-
-      // Check mutated list
-      const mutated = effects.mutated;
-      if (Array.isArray(mutated) && this.primaryGasCoin) {
-        const matching = mutated.find((m: any) => m.reference?.objectId === this.primaryGasCoin?.objectId);
-        if (matching?.reference) {
-          this.primaryGasCoin.version = String(matching.reference.version);
-          this.primaryGasCoin.digest = matching.reference.digest;
-          this.primaryGasCoin.lastUpdatedMs = Date.now();
-        }
-      }
-    } catch {
-      // Non-fatal; background reconciliation will refresh
+  public updateFromGrpcExecutionEffects(
+    effects: { gasObject: { objectId: string; outputVersion: string | null; outputDigest: string | null } | null } | undefined
+  ): void {
+    const gasObject = effects?.gasObject;
+    if (
+      !this.primaryGasCoin ||
+      !gasObject ||
+      gasObject.objectId !== this.primaryGasCoin.objectId ||
+      gasObject.outputVersion === null ||
+      gasObject.outputDigest === null
+    ) {
+      return;
     }
+
+    this.primaryGasCoin.version = gasObject.outputVersion;
+    this.primaryGasCoin.digest = gasObject.outputDigest;
+    this.primaryGasCoin.lastUpdatedMs = Date.now();
+  }
+
+  public updateFromExecutionEffects(effects: {
+    gasObject?: {
+      reference?: { objectId?: string; version?: string | number; digest?: string };
+    };
+    mutated?: Array<{ reference?: { objectId?: string; version?: string | number; digest?: string } }>;
+  } | null): void {
+    if (!effects || !this.primaryGasCoin) return;
+
+    const gasReference = effects.gasObject?.reference ??
+      effects.mutated?.find((item) => item.reference?.objectId === this.primaryGasCoin?.objectId)?.reference;
+    if (
+      gasReference?.objectId !== this.primaryGasCoin.objectId ||
+      gasReference.version === undefined ||
+      !gasReference.digest
+    ) {
+      return;
+    }
+
+    this.primaryGasCoin.version = String(gasReference.version);
+    this.primaryGasCoin.digest = gasReference.digest;
+    this.primaryGasCoin.lastUpdatedMs = Date.now();
   }
 
   /**

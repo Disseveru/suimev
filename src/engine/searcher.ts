@@ -44,7 +44,7 @@ export class LiquidationSearcher {
     totalLiquidationsAttempted: 0,
     successfulLiquidations: 0,
     failedLiquidations: 0,
-    cumulativeNetProfitUsd: 0,
+    cumulativeRealizedPnlUsd: null,
     cumulativeGasSpentSui: 0,
   };
 
@@ -297,7 +297,7 @@ export class LiquidationSearcher {
           borrower: opportunity.obligation.ownerAddress,
           repay: `${opportunity.debtSymbol} ($${opportunity.debtRepayUsd.toFixed(2)})`,
           seize: `${opportunity.collateralSymbol} ($${opportunity.collateralReceiveUsd.toFixed(2)})`,
-          expectedProfitUsd: `$${opportunity.expectedGrossProfitUsd.toFixed(2)}`,
+          expectedGrossProfitUsd: `$${opportunity.expectedGrossProfitUsd.toFixed(2)}`,
         },
         '🎯 LIQUIDATION OPPORTUNITY IDENTIFIED — BUILDING ZERO-CAPITAL PTB'
       );
@@ -319,17 +319,27 @@ export class LiquidationSearcher {
       this.stats.successfulSimulations++;
       const simulatedProfitUsd = simResult.netProfitUsd;
 
+      if (CONFIG.dryRun) {
+        logger.info(
+          {
+            protocol: opportunity.protocol,
+            obligationId: opportunity.obligation.obligationId,
+            simulatedNetProfitUsd: simulatedProfitUsd.toFixed(2),
+          },
+          'Dry-run simulation passed; no transaction was signed or broadcast'
+        );
+        return true;
+      }
+
       // STEP 3: Execute transaction via Parallel Broadcast Race
       this.stats.totalLiquidationsAttempted++;
       const execResult = await TransactionExecutor.execute(
         builtPtb.tx,
-        opportunity,
-        simulatedProfitUsd
+        opportunity
       );
 
       if (execResult.success) {
         this.stats.successfulLiquidations++;
-        this.stats.cumulativeNetProfitUsd += execResult.netProfitUsd;
         this.stats.cumulativeGasSpentSui += execResult.gasUsedSui;
         this.stats.lastLiquidationTime = execResult.timestamp;
         telemetryBridge.exportSnapshot().catch(() => {});

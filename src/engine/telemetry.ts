@@ -13,8 +13,8 @@ export interface ExecutionMetric {
   protocol: 'navi' | 'scallop';
   debtSymbol: string;
   collateralSymbol: string;
-  expectedProfitUsd: number;
-  actualProfitUsd?: number;
+  expectedGrossProfitUsd: number;
+  realizedProfitUsd?: number;
   gasCostSui: number;
   success: boolean;
   digest?: string;
@@ -30,7 +30,7 @@ export interface ExecutionMetric {
 export class TelemetryManager {
   private static instance: TelemetryManager;
   private metrics: ExecutionMetric[] = [];
-  private totalProfitUsd = 0;
+  private totalProfitUsd: number | null = null;
   private totalLiquidationsAttempted = 0;
   private totalLiquidationsSucceeded = 0;
   private totalRevertsPrevented = 0;
@@ -55,11 +55,13 @@ export class TelemetryManager {
 
     if (metric.success) {
       this.totalLiquidationsSucceeded++;
-      this.totalProfitUsd += metric.actualProfitUsd ?? metric.expectedProfitUsd;
+      if (metric.realizedProfitUsd !== undefined) {
+        this.totalProfitUsd = (this.totalProfitUsd ?? 0) + metric.realizedProfitUsd;
+      }
       logger.info(
         {
           digest: metric.digest,
-          profitUsd: metric.actualProfitUsd ?? metric.expectedProfitUsd,
+          realizedProfitUsd: metric.realizedProfitUsd,
           totalCycleMs: metric.latencies.totalCycleDurationMs,
         },
         '🎉 MEV Liquidation Succeeded On-Chain!'
@@ -82,7 +84,7 @@ export class TelemetryManager {
   }
 
   public getSummary(): {
-    totalProfitUsd: number;
+    totalProfitUsd: number | null;
     attempted: number;
     succeeded: number;
     successRatePct: number;

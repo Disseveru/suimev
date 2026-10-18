@@ -7,6 +7,7 @@ import { logger } from '../ui/logger.js';
  * Thread-safe, lock-free reads for sub-millisecond Health Factor evaluations.
  */
 export class PriceCache {
+  public static readonly MAX_PYTH_CLOCK_SKEW_MS = 2_000;
   private static instance: PriceCache;
   private pricesByCoinType: Map<string, OraclePrice> = new Map();
   private pricesBySymbol: Map<string, OraclePrice> = new Map();
@@ -77,7 +78,24 @@ export class PriceCache {
   }
 
   public updatePrice(price: OraclePrice): void {
+    const now = Date.now();
+    if (
+      !Number.isFinite(price.price) ||
+      price.price <= 0 ||
+      !Number.isFinite(price.confidence) ||
+      price.confidence < 0 ||
+      !Number.isFinite(price.publishTime) ||
+      price.publishTime <= 0 ||
+      !Number.isFinite(price.lastUpdatedMs) ||
+      price.publishTime * 1000 > now + PriceCache.MAX_PYTH_CLOCK_SKEW_MS
+    ) {
+      return;
+    }
+
     const normType = normalizeStructTag(price.coinType);
+    const previous = this.pricesByCoinType.get(normType);
+    if (previous && price.publishTime < previous.publishTime) return;
+
     const updatedPrice: OraclePrice = {
       ...price,
       isDefaultSeed: price.isDefaultSeed ?? false,
@@ -254,7 +272,7 @@ export class PriceCache {
    * Check if a price exists, is NOT a cold-start static seed default,
    * and was updated within maxAgeMs (default 60s per audit plan & AGENTS.md §8).
    */
-  public isPriceFresh(coinType: string, maxAgeMs: number = 60_000): boolean {
+  public isPriceFresh(coinType: string, maxAgeMs: number = 10_000): boolean {
     if (!coinType) return false;
     let price = this.getPriceByCoinType(coinType);
     if (!price) {
@@ -263,9 +281,23 @@ export class PriceCache {
         price = this.getPriceBySymbol(cfg.symbol);
       }
     }
-    if (!price || price.price <= 0) return false;
+    if (
+      !price ||
+      !Number.isFinite(price.price) ||
+      price.price <= 0 ||
+      !Number.isFinite(price.publishTime) ||
+      price.publishTime <= 0
+    ) return false;
     if (price.isDefaultSeed) return false;
-    return Date.now() - price.lastUpdatedMs <= maxAgeMs;
+    const now = Date.now();
+    const receivedAgeMs = now - price.lastUpdatedMs;
+    const publishedAgeMs = now - price.publishTime * 1000;
+    return (
+      receivedAgeMs >= 0 &&
+      receivedAgeMs <= maxAgeMs &&
+      publishedAgeMs >= -PriceCache.MAX_PYTH_CLOCK_SKEW_MS &&
+      publishedAgeMs <= maxAgeMs
+    );
   }
 
   /**
@@ -286,7 +318,7 @@ export class PriceCache {
   /**
    * Validate that all required coin types possess fresh live oracle prices
    */
-  public arePricesFresh(coinTypes: string[], maxAgeMs: number = 60_000): boolean {
+  public arePricesFresh(coinTypes: string[], maxAgeMs: number = 10_000): boolean {
     return coinTypes.every((ct) => this.isPriceFresh(ct, maxAgeMs));
   }
 
@@ -302,7 +334,7 @@ export class PriceCache {
         debts: { coinType: string }[];
       };
     },
-    maxAgeMs: number = 60_000
+    maxAgeMs: number = 10_000
   ): boolean {
     const coinTypes = [
       opportunity.debtCoinType,

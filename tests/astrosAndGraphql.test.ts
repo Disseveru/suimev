@@ -36,8 +36,8 @@ describe('Astros Router, GraphQL Service & Canonical Normalization Tests', () =>
       protocol: 'navi',
       debtSymbol: 'USDC',
       collateralSymbol: 'SUI',
-      expectedProfitUsd: 12.50,
-      actualProfitUsd: 12.45,
+      expectedGrossProfitUsd: 12.50,
+      realizedProfitUsd: 12.45,
       gasCostSui: 0.003,
       success: true,
       digest: '5TestDigest11111111111111111111111111111111111',
@@ -56,6 +56,31 @@ describe('Astros Router, GraphQL Service & Canonical Normalization Tests', () =>
     expect(summary.succeeded).toBeGreaterThan(0);
     expect(summary.revertsPrevented).toBeGreaterThan(0);
     expect(summary.totalProfitUsd).toBeGreaterThanOrEqual(12.45);
+  });
+
+  it('does not count estimated gross profit as realized PnL', () => {
+    const profitBefore = telemetry.getSummary().totalProfitUsd;
+
+    telemetry.recordExecution({
+      opportunityId: '0xEstimatedObligation',
+      protocol: 'navi',
+      debtSymbol: 'USDC',
+      collateralSymbol: 'SUI',
+      expectedGrossProfitUsd: 100,
+      gasCostSui: 0.003,
+      success: true,
+      digest: '5EstimatedDigest111111111111111111111111111111',
+      timestampMs: Date.now(),
+      latencies: {
+        evalDurationMs: 2,
+        ptbBuildDurationMs: 5,
+        simulationDurationMs: 15,
+        broadcastDurationMs: 45,
+        totalCycleDurationMs: 67,
+      },
+    });
+
+    expect(telemetry.getSummary().totalProfitUsd).toBe(profitBefore);
   });
 
   it('verifies GraphQL client endpoint configuration', () => {

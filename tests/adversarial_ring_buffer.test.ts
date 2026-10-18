@@ -54,7 +54,7 @@ describe('Adversarial Stress Test: Ring Buffer & Engine Latency (Challenger M2-2
           borrower: `0xBorrower_${String(i).padStart(3, '0')}`,
           debtRepaid: `${i * 100} USDC`,
           collateralSeized: `${i * 50} SUI`,
-          netProfitUsd: i * 2.5,
+          estimatedNetProfitUsd: i * 2.5,
           gasCostSui: 0.005,
           txDigest: `digest_${i}`,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/digest_${i}`,
@@ -92,7 +92,7 @@ describe('Adversarial Stress Test: Ring Buffer & Engine Latency (Challenger M2-2
           borrower: `0xBurstBorrower_${idx}`,
           debtRepaid: `${idx * 10} USDC`,
           collateralSeized: `${idx * 5} SUI`,
-          netProfitUsd: idx * 1.5,
+          estimatedNetProfitUsd: idx * 1.5,
           gasCostSui: 0.004,
           txDigest: `burst_digest_${idx}`,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/burst_digest_${idx}`,
@@ -114,7 +114,7 @@ describe('Adversarial Stress Test: Ring Buffer & Engine Latency (Challenger M2-2
         borrower: '0xOriginal',
         debtRepaid: '100 USDC',
         collateralSeized: '50 SUI',
-        netProfitUsd: 10,
+        estimatedNetProfitUsd: 10,
         gasCostSui: 0.005,
         txDigest: 'orig_1',
         txDigestLink: 'https://suiscan.xyz/mainnet/tx/orig_1',
@@ -136,7 +136,7 @@ describe('Adversarial Stress Test: Ring Buffer & Engine Latency (Challenger M2-2
           borrower: `0xPre_${i}`,
           debtRepaid: '10 USDC',
           collateralSeized: '5 SUI',
-          netProfitUsd: 1,
+          estimatedNetProfitUsd: 1,
           gasCostSui: 0.001,
           txDigest: `pre_${i}`,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/pre_${i}`,
@@ -155,7 +155,7 @@ describe('Adversarial Stress Test: Ring Buffer & Engine Latency (Challenger M2-2
           borrower: `0xPost_${i}`,
           debtRepaid: '20 USDC',
           collateralSeized: '10 SUI',
-          netProfitUsd: 2,
+          estimatedNetProfitUsd: 2,
           gasCostSui: 0.001,
           txDigest: `post_${i}`,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/post_${i}`,
@@ -210,18 +210,18 @@ describe('Adversarial Stress Test: Ring Buffer & Engine Latency (Challenger M2-2
           borrower: '0xProfitTester',
           debtRepaid: '1,000.00 USDC',
           collateralSeized: '500.00 SUI',
-          netProfitUsd: profit,
+          estimatedNetProfitUsd: profit,
           gasCostSui: 0.005,
           txDigest: `profit_digest_${profit}`,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/profit_digest_${profit}`,
         });
 
         const payload = telemetryBridge.generatePayload();
-        expect(payload.recentLiquidations[0].netProfitUsd).toBe(profit);
+        expect(payload.recentLiquidations[0].estimatedNetProfitUsd).toBe(profit);
 
         const jsonStr = JSON.stringify(payload);
         const parsed = JSON.parse(jsonStr);
-        expect(parsed.recentLiquidations[0].netProfitUsd).toBe(profit);
+        expect(parsed.recentLiquidations[0].estimatedNetProfitUsd).toBe(profit);
       }
     });
 
@@ -232,7 +232,7 @@ describe('Adversarial Stress Test: Ring Buffer & Engine Latency (Challenger M2-2
         borrower: '0xNoDigestBorrower',
         debtRepaid: '500.00 USDC',
         collateralSeized: '250.00 SUI',
-        netProfitUsd: 20.0,
+        estimatedNetProfitUsd: 20.0,
         gasCostSui: 0.004,
         txDigest: '',
         txDigestLink: '',

@@ -1,5 +1,10 @@
 # Project: SuiMEV Liquidator Bot Expansion & Dart CLI Dashboard
 
+## Sui Transport and Execution Readiness
+The simulator, operator gas reads, reference gas price reads, and transaction executor use the native Sui gRPC client. Set `SUI_GRPC_HOST` to a gRPC host such as `sui-mainnet.g.alchemy.com:443`; when required, set `SUI_GRPC_AUTHORIZATION` to the complete Authorization value (for Alchemy, `Bearer <API key>`). An existing Alchemy `ALCHEMY_SUI_MAINNET_RPC` URL in `/v2/<key>` form is translated in memory to the corresponding Alchemy gRPC host and bearer auth metadata; the key is not logged.
+
+The indexers, protocol adapters, and several utilities still use legacy JSON-RPC/WebSocket paths, and the complete net-profit cost model has not been verified. Live execution is therefore blocked in code even if `DRY_RUN=false` and `LIVE_EXECUTION_APPROVED=true`. No live transaction should be attempted until those migrations, fee accounting, and real-provider simulations are complete.
+
 ## Architecture
 The system consists of three decoupled operational tiers:
 1. **SuiMEV On-Chain Engine (TypeScript / Node.js)**:
@@ -59,7 +64,7 @@ The telemetry bridge writes this JSON payload atomically every 1000–1500ms:
     "gasTankBalanceMist": "14852300000"
   },
   "financials": {
-    "netRealizedPnlUsd": 124.50,
+    "netRealizedPnlUsd": null,
     "cumulativeGasSpentSui": 1.254,
     "successfulLiquidations": 3,
     "failedLiquidations": 0,
@@ -91,7 +96,7 @@ The telemetry bridge writes this JSON payload atomically every 1000–1500ms:
       "borrower": "0x789...abc",
       "debtRepaid": "5,000.00 USDC",
       "collateralSeized": "2,450.12 SUI",
-      "netProfitUsd": 42.15,
+      "estimatedNetProfitUsd": 42.15,
       "gasCostSui": 0.045,
       "txDigest": "5cZ8X...xyz",
       "txDigestLink": "https://suiscan.xyz/mainnet/tx/5cZ8X...xyz"
@@ -99,6 +104,8 @@ The telemetry bridge writes this JSON payload atomically every 1000–1500ms:
   ]
 }
 ```
+
+`netRealizedPnlUsd` is `null` until realized profit can be measured from confirmed execution effects. `estimatedNetProfitUsd` is a simulation estimate and is not reported as realized PnL.
 
 ### 2. Coin Registry ↔ DEX Router & Oracles
 - Every token configured in `COIN_CONFIGS` must supply:

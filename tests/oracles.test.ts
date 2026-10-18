@@ -9,7 +9,7 @@ describe('PriceCache & Oracle Pipeline', () => {
       '0x23d731513e78642a6b3076878b31a196142ae58914b4fb2c65a08332d72f96cf',
       '312450000',
       -8,
-      1700000000
+      Math.floor(Date.now() / 1000)
     );
 
     const suiPrice = priceCache.getPriceBySymbol('SUI');
@@ -27,7 +27,7 @@ describe('PriceCache & Oracle Pipeline', () => {
       confidence: 0,
       exponent: -8,
       rawPrice: 200000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -79,7 +79,7 @@ describe('PriceCache & Oracle Pipeline', () => {
       confidence: 0,
       exponent: -8,
       rawPrice: 190000000n,
-      publishTime: 1700000100,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 

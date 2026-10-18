@@ -1,6 +1,6 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { LiquidationOpportunity, ExecutionResult, TelemetryRecentLiquidationItem } from '../config/types.js';
-import { rpcManager } from '../client/suiClient.js';
+import { formatGrpcExecutionError, grpcManager } from '../client/grpcClient.js';
 import { gasManager } from '../client/gasManager.js';
 import { CONFIG } from '../config/index.js';
 import { logger } from '../ui/logger.js';
@@ -18,32 +18,32 @@ export class TransactionExecutor {
    */
   public static async execute(
     tx: Transaction,
-    opportunity: LiquidationOpportunity,
-    netProfitUsd: number
+    opportunity: LiquidationOpportunity
   ): Promise<ExecutionResult> {
     const startTime = Date.now();
-    const suiPriceUsd = priceCache.getPriceUsd('0x2::sui::SUI') || 2.50;
-    // Safety Gate: Pyth Price Freshness Validation
-    // Per AGENTS.md §4.3 & §9.3, live broadcast mandates freshness <= 45s (allow 60s in dry-run mode for local tests)
-    const nowMs = Date.now();
-    const MAX_AGE_MS = CONFIG.dryRun ? 60000 : 45000;
-    const debtPrice = priceCache.getPriceBySymbol(opportunity.debtSymbol);
-    const colPrice = priceCache.getPriceBySymbol(opportunity.collateralSymbol);
-    
-    if (!debtPrice || debtPrice.isDefaultSeed || (nowMs - debtPrice.lastUpdatedMs > MAX_AGE_MS)) {
-      throw new Error(`Oracle price for ${opportunity.debtSymbol} is unverified or static seed default. Aborting per AGENTS.md freshness rules.`);
+    if (CONFIG.dryRun) {
+      throw new Error('DRY_RUN is enabled; refusing to submit a transaction. Use the simulation path instead.');
     }
-    if (!colPrice || colPrice.isDefaultSeed || (nowMs - colPrice.lastUpdatedMs > MAX_AGE_MS)) {
-      throw new Error(`Oracle price for ${opportunity.collateralSymbol} is unverified or static seed default. Aborting per AGENTS.md freshness rules.`);
+    if (!CONFIG.liveExecutionApproved) {
+      throw new Error('LIVE_EXECUTION_APPROVED is not true; refusing to broadcast a transaction.');
+    }
+    if (!CONFIG.liveExecutionReady) {
+      throw new Error('Live execution is disabled until all Sui gRPC, indexer, protocol, and profit-accounting migrations are complete.');
     }
 
-    // Safety Gate: Net Profit Validation (Accounts for flash loan, DEX swap, and gas costs)
-    if (netProfitUsd < CONFIG.minProfitUsd) {
-      throw new Error(`Net profit ${netProfitUsd.toFixed(2)} USD is below minimum threshold ${CONFIG.minProfitUsd} USD. Aborting.`);
+    if (!priceCache.arePricesFreshForOpportunity(opportunity, 10_000)) {
+      throw new Error('One or more liquidation asset prices are stale, future-dated, or unverified; refusing to broadcast.');
+    }
+    if (!priceCache.isPriceFresh('0x2::sui::SUI', 10_000)) {
+      throw new Error('SUI gas price is stale, future-dated, or unverified; refusing to broadcast.');
+    }
+    const suiPriceUsd = priceCache.getPriceUsd('0x2::sui::SUI');
+    if (!Number.isFinite(suiPriceUsd) || suiPriceUsd <= 0) {
+      throw new Error('SUI gas price is unavailable or invalid; refusing to broadcast.');
     }
 
-    // Set priority gas price to front-run competing searchers via Dynamic Priority Gas Auction (PGA)
     try {
+      // Set priority gas price to front-run competing searchers via Dynamic Priority Gas Auction (PGA)
       const refGasPrice = await this.getReferenceGasPrice();
       const priorityGasPrice = this.calculatePriorityGasPrice(
         refGasPrice,
@@ -59,50 +59,8 @@ export class TransactionExecutor {
         },
         '⚡ Dynamic Priority Gas Price computed for PGA consensus ordering'
       );
-    } catch {
-      // Keep default gas price if RPC query fails
-    }
 
-    // Safety Gate: DRY_RUN mode validation
-    if (CONFIG.dryRun) {
-      const mockDigest = 'DRY_RUN_' + Math.random().toString(36).substring(2, 15).toUpperCase();
-      logger.info(
-        {
-          digest: mockDigest,
-          protocol: opportunity.protocol,
-          repayDebt: `${opportunity.debtAmountToRepay} ${opportunity.debtSymbol}`,
-          seizeCollateral: `${opportunity.collateralToReceive} ${opportunity.collateralSymbol}`,
-          netProfitUsd: netProfitUsd.toFixed(2),
-        },
-        '🛡️ DRY-RUN SUCCESS: Liquidation validated without on-chain broadcast'
-      );
-
-      const event: TelemetryRecentLiquidationItem = {
-        timestamp: new Date().toISOString(),
-        protocol: opportunity.protocol,
-        borrower: opportunity.obligation.ownerAddress,
-        debtRepaid: this.formatCoinAmount(opportunity.debtAmountToRepay, opportunity.debtSymbol),
-        collateralSeized: this.formatCoinAmount(opportunity.collateralToReceive, opportunity.collateralSymbol),
-        netProfitUsd: Number(netProfitUsd.toFixed(2)),
-        gasCostSui: 0.005,
-        txDigest: mockDigest,
-        txDigestLink: `https://suiscan.xyz/mainnet/tx/${mockDigest}`,
-      };
-      telemetryBridge.recordLiquidation(event);
-
-      return {
-        digest: mockDigest,
-        success: true,
-        opportunity,
-        gasUsedSui: 0.005,
-        gasCostUsd: 0.005 * suiPriceUsd,
-        netProfitUsd,
-        timestamp: Date.now(),
-      };
-    }
-
-    // LIVE EXECUTION PATH
-    try {
+      // LIVE EXECUTION PATH
       // Verify operator has sufficient SUI balance for gas budget (at least 2x budget per AGENTS.md §4.3)
       const minRequiredMist = BigInt(CONFIG.gasBudget) * 2n;
       const gasCheck = await this.checkOperatorGasBalance();
@@ -127,29 +85,45 @@ export class TransactionExecutor {
         }]);
       }
 
-      // 🏁 PARALLEL BROADCAST RACE — broadcast to all healthy endpoints simultaneously
-      const response = await rpcManager.executeBroadcastRace(
-        'signAndExecuteTransaction',
-        async (client) => {
-          return await client.signAndExecuteTransaction({
-            signer: CONFIG.operatorKeypair,
-            transaction: tx,
-            options: {
-              showEffects: true,
-              showEvents: true,
-            },
-          });
-        }
-      );
+      const { PreFlightSimulator } = await import('./simulator.js');
+      const finalSimulation = await PreFlightSimulator.simulate(tx, opportunity);
+      if (!finalSimulation.success || !finalSimulation.isProfitable) {
+        throw new Error(
+          `Final pre-broadcast simulation rejected the transaction: ${finalSimulation.errorMessage ?? 'net profit is below the configured minimum.'}`
+        );
+      }
+      const estimatedNetProfitUsd = finalSimulation.netProfitUsd;
+      if (estimatedNetProfitUsd < CONFIG.minProfitUsd) {
+        throw new Error(
+          `Final simulated net profit ${estimatedNetProfitUsd.toFixed(2)} USD is below minimum threshold ${CONFIG.minProfitUsd} USD.`
+        );
+      }
+
+      // Submit once: after an ambiguous transport failure, retrying can duplicate a broadcast.
+      const response = await grpcManager.getClient().signAndExecuteTransaction({
+        signer: CONFIG.operatorKeypair,
+        transaction: tx,
+        include: { effects: true, events: true },
+      });
 
       // Surgically update in-memory gas coin version and digest from execution effects in 0ms
-      gasManager.updateFromExecutionEffects(response.effects);
+      const transactionResult = response.$kind === 'Transaction'
+        ? response.Transaction
+        : response.FailedTransaction;
+      const effects = transactionResult.effects;
+      if (!effects) {
+        throw new Error(
+          `gRPC returned no execution effects for submitted transaction ${transactionResult.digest}; its on-chain outcome must be checked before retrying.`
+        );
+      }
+      gasManager.updateFromGrpcExecutionEffects(effects);
 
-      const digest = response.digest;
-      const status = response.effects?.status?.status;
-      const isSuccess = status === 'success';
+      const digest = transactionResult.digest;
+      const status = transactionResult.status;
+      const isSuccess = status.success;
+      const statusError = formatGrpcExecutionError(status);
 
-      const gasUsed = response.effects?.gasUsed;
+      const gasUsed = effects?.gasUsed;
       const netGasMist = BigInt(gasUsed?.computationCost || '0') + BigInt(gasUsed?.storageCost || '0') - BigInt(gasUsed?.storageRebate || '0');
       const gasUsedSui = Number(netGasMist > 0n ? netGasMist : 0n) / 1e9;
       const gasCostUsd = gasUsedSui * suiPriceUsd;
@@ -169,12 +143,11 @@ export class TransactionExecutor {
         protocol: opportunity.protocol,
         debtSymbol: opportunity.debtSymbol,
         collateralSymbol: opportunity.collateralSymbol,
-        expectedProfitUsd: opportunity.expectedGrossProfitUsd,
-        actualProfitUsd: isSuccess ? netProfitUsd : 0,
+        expectedGrossProfitUsd: opportunity.expectedGrossProfitUsd,
         gasCostSui: gasUsedSui,
         success: isSuccess,
         digest,
-        error: response.effects?.status?.error,
+        error: statusError,
         timestampMs: Date.now(),
         latencies: {
           evalDurationMs: 0,
@@ -187,7 +160,7 @@ export class TransactionExecutor {
 
       if (isSuccess) {
         logger.info(
-          { digest, latencyMs, netProfitUsd: netProfitUsd.toFixed(2) },
+          { digest, latencyMs, estimatedNetProfitUsd: estimatedNetProfitUsd.toFixed(2) },
           '🎉 LIQUIDATION EXECUTED SUCCESSFULLY ON-CHAIN!'
         );
         const event: TelemetryRecentLiquidationItem = {
@@ -196,14 +169,14 @@ export class TransactionExecutor {
           borrower: opportunity.obligation.ownerAddress,
           debtRepaid: this.formatCoinAmount(opportunity.debtAmountToRepay, opportunity.debtSymbol),
           collateralSeized: this.formatCoinAmount(opportunity.collateralToReceive, opportunity.collateralSymbol),
-          netProfitUsd: Number(netProfitUsd.toFixed(2)),
+          estimatedNetProfitUsd: Number(estimatedNetProfitUsd.toFixed(2)),
           gasCostSui: Number(gasUsedSui.toFixed(4)),
           txDigest: digest,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/${digest}`,
         };
         telemetryBridge.recordLiquidation(event);
       } else {
-        const statusErr = response.effects?.status?.error;
+        const statusErr = statusError;
         if (gasManager.isGasObjectError(statusErr)) {
           gasManager.handleGasError(statusErr).catch(() => {});
         }
@@ -219,23 +192,23 @@ export class TransactionExecutor {
         opportunity,
         gasUsedSui,
         gasCostUsd,
-        netProfitUsd: isSuccess ? netProfitUsd : -gasCostUsd,
+        estimatedNetProfitUsd: isSuccess ? estimatedNetProfitUsd : -gasCostUsd,
         timestamp: Date.now(),
-        errorMessage: response.effects?.status?.error,
+        errorMessage: statusError,
       };
     } catch (err) {
       if (gasManager.isGasObjectError(err)) {
         gasManager.handleGasError(err).catch(() => {});
       }
       const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.error({ error: errorMsg }, 'Execution failed during transaction submission');
+      logger.error({ error: errorMsg }, 'Live execution halted before or during transaction submission');
 
       telemetry.recordExecution({
         opportunityId: opportunity.obligation.obligationId,
         protocol: opportunity.protocol,
         debtSymbol: opportunity.debtSymbol,
         collateralSymbol: opportunity.collateralSymbol,
-        expectedProfitUsd: opportunity.expectedGrossProfitUsd,
+        expectedGrossProfitUsd: opportunity.expectedGrossProfitUsd,
         gasCostSui: 0,
         success: false,
         error: errorMsg,
@@ -250,12 +223,11 @@ export class TransactionExecutor {
       });
 
       return {
-        digest: 'FAILED',
         success: false,
         opportunity,
         gasUsedSui: 0,
         gasCostUsd: 0,
-        netProfitUsd: 0,
+        estimatedNetProfitUsd: null,
         timestamp: Date.now(),
         errorMessage: errorMsg,
       };
@@ -311,14 +283,16 @@ export class TransactionExecutor {
     }
 
     try {
-      const price = await rpcManager.executeWithFallback('getReferenceGasPrice', (client) =>
-        client.getReferenceGasPrice()
-      );
-      this.cachedRefGasPrice = BigInt(price);
+      await grpcManager.checkHealth();
+      const { referenceGasPrice } = await grpcManager.getClient().getReferenceGasPrice();
+      if (!referenceGasPrice) throw new Error('Sui gRPC response omitted the reference gas price');
+      this.cachedRefGasPrice = BigInt(referenceGasPrice);
       this.lastRefGasPriceTimeMs = now;
       return this.cachedRefGasPrice;
     } catch (e) {
-      return this.cachedRefGasPrice ?? 1000n;
+      throw new Error(
+        `Unable to obtain a current Sui reference gas price: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
 
@@ -342,10 +316,9 @@ export class TransactionExecutor {
     }
 
     try {
-      const balance = await rpcManager.executeWithFallback('getBalance', (client) =>
-        client.getBalance({ owner: CONFIG.operatorAddress })
-      );
-      const balanceMist = BigInt(balance.totalBalance);
+      await grpcManager.checkHealth();
+      const balance = await grpcManager.getClient().getBalance({ owner: CONFIG.operatorAddress });
+      const balanceMist = BigInt(balance.balance.balance);
       const balanceSui = Number(balanceMist) / 1e9;
       this.cachedGasBalance = { balanceMist, balanceSui, lastCheckedMs: now };
 
@@ -354,8 +327,10 @@ export class TransactionExecutor {
         balanceSui,
         isSufficient: balanceMist >= minRequiredMist,
       };
-    } catch {
-      return { balanceMist: 0n, balanceSui: 0, isSufficient: false };
+    } catch (error) {
+      throw new Error(
+        `Unable to verify operator SUI gas balance: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

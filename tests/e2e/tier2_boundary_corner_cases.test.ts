@@ -68,7 +68,7 @@ describe('Tier 2: Boundary & Corner Cases (Precision, Missing Files, Corruptions
         confidence: 0,
         exponent: -8,
         rawPrice: 50n,
-        publishTime: 1700000000,
+        publishTime: Math.floor(Date.now() / 1000),
         lastUpdatedMs: Date.now(),
       });
       const price = priceCache.getPriceUsd('0x2::micro::MICRO');
