@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import {
   COIN_CONFIGS,
@@ -293,9 +293,18 @@ describe('Coin Coverage Modernization & Expansion (Requirement R1)', () => {
       expect(initialPoolCount).toBeGreaterThan(0);
 
       // syncDynamicPools should not throw even if network is restricted or fails
-      const result = await CetusRouter.syncDynamicPools();
-      expect(typeof result).toBe('number');
-      expect(result).toBeGreaterThanOrEqual(0);
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { pools: [] } }),
+      } as Response);
+      try {
+        const result = await CetusRouter.syncDynamicPools();
+        expect(typeof result).toBe('number');
+        expect(result).toBeGreaterThanOrEqual(0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });
