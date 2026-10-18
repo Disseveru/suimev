@@ -77,7 +77,7 @@ describe('Adversarial Stress Test: Atomic Telemetry State Bridge (Milestone M2)'
             borrower: `0xBorrower_Write_${i}`,
             debtRepaid: `${(i + 1) * 100} USDC`,
             collateralSeized: `${(i + 1) * 50} SUI`,
-            netProfitUsd: (i + 1) * 3.5,
+            estimatedNetProfitUsd: (i + 1) * 3.5,
             gasCostSui: 0.02,
             txDigest: `digest_write_${i}`,
             txDigestLink: `https://suiscan.xyz/mainnet/tx/digest_write_${i}`,
@@ -378,7 +378,7 @@ describe('Adversarial Stress Test: Atomic Telemetry State Bridge (Milestone M2)'
           borrower: `0xConcurrentBorrower_${i}`,
           debtRepaid: '100 USDC',
           collateralSeized: '50 SUI',
-          netProfitUsd: 1.0,
+          estimatedNetProfitUsd: 1.0,
           gasCostSui: 0.01,
           txDigest: `digest_${i}`,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/digest_${i}`,
@@ -411,7 +411,7 @@ describe('Adversarial Stress Test: Atomic Telemetry State Bridge (Milestone M2)'
       // Mock searcher with negative PnL and high simulation count
       if (searcher) {
         (searcher as any).stats = {
-          cumulativeNetProfitUsd: -4250.75,
+          cumulativeRealizedPnlUsd: -4250.75,
           cumulativeGasSpentSui: 125.8765,
           successfulLiquidations: 0,
           failedLiquidations: 12,
@@ -531,7 +531,7 @@ describe('Adversarial Stress Test: Atomic Telemetry State Bridge (Milestone M2)'
           borrower: `0xBorrower_${i}`,
           debtRepaid: `${i} USDC`,
           collateralSeized: `${i} SUI`,
-          netProfitUsd: i,
+          estimatedNetProfitUsd: i,
           gasCostSui: 0.01,
           txDigest: `digest_${i}`,
           txDigestLink: `https://suiscan.xyz/mainnet/tx/digest_${i}`,

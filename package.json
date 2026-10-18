@@ -24,9 +24,11 @@
   },
   "dependencies": {
     "@cetusprotocol/cetus-sui-clmm-sdk": "^5.4.0",
+    "@grpc/grpc-js": "^1.14.6",
     "@mysten/deepbook-v3": "^2.7.0",
     "@mysten/sui": "^2.36.0",
     "@naviprotocol/lending": "^2.0.12",
+    "@protobuf-ts/grpc-transport": "^2.11.1",
     "@pythnetwork/price-service-client": "^1.11.0",
     "@pythnetwork/pyth-sui-js": "^4.0.0",
     "@scallop-io/sui-kit": "~2.2.0",

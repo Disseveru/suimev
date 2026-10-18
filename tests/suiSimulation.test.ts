@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { ZeroCapitalPtbBuilder } from '../src/engine/ptbBuilder.js';
 import { PreFlightSimulator } from '../src/engine/simulator.js';
 import { sentioService } from '../src/client/sentioService.js';
 import { priceCache } from '../src/oracles/priceCache.js';
 import { naviProtocol } from '../src/protocols/navi/naviProtocol.js';
+import { grpcManager } from '../src/client/grpcClient.js';
 import { LiquidationOpportunity, ObligationState } from '../src/config/types.js';
 
 describe('Sui Simulation & Sentio Integration Tests', () => {
@@ -53,6 +54,7 @@ describe('Sui Simulation & Sentio Integration Tests', () => {
   };
 
   beforeAll(async () => {
+    vi.spyOn(grpcManager, 'checkHealth').mockResolvedValue('test-chain');
     priceCache.updatePrice({
       symbol: 'SUI',
       coinType: '0x2::sui::SUI',
@@ -60,7 +62,7 @@ describe('Sui Simulation & Sentio Integration Tests', () => {
       confidence: 0,
       exponent: -8,
       rawPrice: 250_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -71,7 +73,7 @@ describe('Sui Simulation & Sentio Integration Tests', () => {
       confidence: 0,
       exponent: -8,
       rawPrice: 100_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -79,6 +81,15 @@ describe('Sui Simulation & Sentio Integration Tests', () => {
   });
 
   it('runs devInspect pre-flight simulation and catches reverts safely', async () => {
+    vi.spyOn(grpcManager, 'getClient').mockReturnValue({
+      simulateTransaction: vi.fn().mockResolvedValue({
+        $kind: 'FailedTransaction',
+        FailedTransaction: {
+          status: { success: false, error: 'MoveAbort(0x2::navi::liquidate, 1)' },
+          effects: null,
+        },
+      }),
+    } as never);
     const built = ZeroCapitalPtbBuilder.buildLiquidationPTB(mockOpportunity);
     const sim = await PreFlightSimulator.simulate(built.tx, mockOpportunity);
 
@@ -88,8 +99,19 @@ describe('Sui Simulation & Sentio Integration Tests', () => {
     expect(typeof sim.success).toBe('boolean');
   });
 
-  it('runs dryRunTransactionBlock and computes gas or abort status', async () => {
+  it('runs native gRPC simulation for the dry-run path', async () => {
     const built = ZeroCapitalPtbBuilder.buildLiquidationPTB(mockOpportunity);
+    vi.spyOn(grpcManager, 'getClient').mockReturnValue({
+      simulateTransaction: vi.fn().mockResolvedValue({
+        $kind: 'Transaction',
+        Transaction: {
+          status: { success: true, error: null },
+          effects: {
+            gasUsed: { computationCost: '1000', storageCost: '500', storageRebate: '500', nonRefundableStorageFee: '0' },
+          },
+        },
+      }),
+    } as never);
     const dryRun = await PreFlightSimulator.dryRun(built.tx, mockOpportunity);
 
     expect(dryRun).toBeDefined();
@@ -99,10 +121,14 @@ describe('Sui Simulation & Sentio Integration Tests', () => {
 
   it('generates serialized PTB payload and Sentio debugger URLs', async () => {
     const built = ZeroCapitalPtbBuilder.buildLiquidationPTB(mockOpportunity);
+    const bytes = new Uint8Array(64).fill(7);
+    const buildSpy = vi.spyOn(built.tx, 'build').mockResolvedValue(bytes);
     const sentioExport = await sentioService.prepareSimulation(built.tx);
 
     expect(sentioExport.rawTransactionBytesBase64).toBeDefined();
     expect(sentioExport.rawTransactionBytesBase64.length).toBeGreaterThan(50);
+    expect(Buffer.from(sentioExport.rawTransactionBytesBase64, 'base64')).toEqual(Buffer.from(bytes));
+    expect(buildSpy).toHaveBeenCalledOnce();
     expect(sentioExport.sentioSimulatorUrl).toBe('https://app.sentio.xyz/sui');
 
     const traceUrl = sentioService.getTraceUrl('F93jd83hKLa7sd7z35uAJPn4XVm');

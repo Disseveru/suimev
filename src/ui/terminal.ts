@@ -87,7 +87,7 @@ export class TerminalDashboard {
 
     // Cumulative PnL & Performance
     const pnlTable = new Table({
-      head: [chalk.yellow('Simulations'), chalk.yellow('Liquidations'), chalk.yellow('Gas Spent (SUI)'), chalk.yellow('Net Profit (USD)')],
+      head: [chalk.yellow('Simulations'), chalk.yellow('Liquidations'), chalk.yellow('Gas Spent (SUI)'), chalk.yellow('Realized PnL (USD)')],
       colWidths: [18, 18, 20, 20],
     });
 
@@ -95,7 +95,11 @@ export class TerminalDashboard {
       `${stats.successfulSimulations} / ${stats.totalSimulations}`,
       `${stats.successfulLiquidations} / ${stats.totalLiquidationsAttempted}`,
       chalk.magenta(`${stats.cumulativeGasSpentSui.toFixed(4)} SUI`),
-      chalk.green.bold(`+$${stats.cumulativeNetProfitUsd.toFixed(2)} USD`),
+      chalk.green.bold(
+        stats.cumulativeRealizedPnlUsd === null
+          ? 'Not measured'
+          : `$${stats.cumulativeRealizedPnlUsd.toFixed(2)} USD`
+      ),
     ]);
 
     // Print to console

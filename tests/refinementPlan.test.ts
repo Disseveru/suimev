@@ -3,11 +3,38 @@ import { ZeroCapitalPtbBuilder } from '../src/engine/ptbBuilder.js';
 import { PreFlightSimulator } from '../src/engine/simulator.js';
 import { gasManager } from '../src/client/gasManager.js';
 import { priceCache } from '../src/oracles/priceCache.js';
-import { rpcManager } from '../src/client/suiClient.js';
+import { grpcManager } from '../src/client/grpcClient.js';
 import { Transaction } from '@mysten/sui/transactions';
 import { LiquidationOpportunity, ObligationState } from '../src/config/types.js';
 
 describe('Audit & Refinement Plan Implementation Verification', () => {
+  beforeEach(() => {
+    vi.spyOn(grpcManager, 'checkHealth').mockResolvedValue('test-chain');
+    const publishTime = Math.floor(Date.now() / 1000);
+    priceCache.updatePrice({
+      symbol: 'SUI',
+      coinType: '0x2::sui::SUI',
+      price: 2.5,
+      confidence: 0,
+      exponent: -8,
+      rawPrice: 250_000_000n,
+      publishTime,
+      lastUpdatedMs: Date.now(),
+      isDefaultSeed: false,
+    });
+    priceCache.updatePrice({
+      symbol: 'USDC',
+      coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+      price: 1,
+      confidence: 0,
+      exponent: -8,
+      rawPrice: 100_000_000n,
+      publishTime,
+      lastUpdatedMs: Date.now(),
+      isDefaultSeed: false,
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -92,27 +119,50 @@ describe('Audit & Refinement Plan Implementation Verification', () => {
         digest: '11111111111111111111111111111111',
       };
       vi.spyOn(gasManager, 'getActiveGasObject').mockReturnValue(activeGas);
-
-      let executedMethod = '';
-      vi.spyOn(rpcManager, 'executeWithFallback').mockImplementation(async (method, fn) => {
-        executedMethod = method;
-        if (method === 'dryRunTransactionBlock') {
-          return {
-            effects: {
-              status: { status: 'success' },
-              gasUsed: { computationCost: '1000', storageCost: '500', storageRebate: '500' },
-            },
-          };
-        }
-        return {} as any;
+      const simulateTransaction = vi.fn().mockResolvedValue({
+        $kind: 'Transaction',
+        Transaction: {
+          status: { success: true, error: null },
+          effects: {
+            gasUsed: { computationCost: '1000', storageCost: '500', storageRebate: '500', nonRefundableStorageFee: '0' },
+          },
+        },
       });
+      vi.spyOn(grpcManager, 'getClient').mockReturnValue({ simulateTransaction } as never);
 
       const tx = new Transaction();
       tx.setSender('0x59b1cf64e8e21e9c13488e80e9b961d16000a3d10fae16123dbfaeef9e309e3d');
       tx.setGasBudget(100_000_000n);
 
       const result = await PreFlightSimulator.dryRun(tx, mockOpportunity);
-      expect(executedMethod).toBe('dryRunTransactionBlock');
+      expect(simulateTransaction).toHaveBeenCalledOnce();
+      expect(result.simulationType).toBe('dryRun');
+      expect(result.success).toBe(true);
+    });
+
+    it('falls back to devInspect when PTB byte building fails despite an active gas object', async () => {
+      vi.spyOn(gasManager, 'getActiveGasObject').mockReturnValue({
+        objectId: '0x' + '2'.repeat(64),
+        version: '1',
+        digest: '11111111111111111111111111111111',
+      });
+      vi.spyOn(Transaction.prototype, 'build').mockRejectedValue(new Error('PTB build failed'));
+      const simulateSpy = vi.spyOn(PreFlightSimulator, 'simulate').mockResolvedValueOnce({
+        success: true,
+        opportunity: mockOpportunity,
+        gasUsedSui: 0.002,
+        gasCostUsd: 0.005,
+        netProfitUsd: 4.995,
+        netProfitSui: 1.998,
+        isProfitable: true,
+        simulationType: 'devInspect',
+      });
+      const grpcClientSpy = vi.spyOn(grpcManager, 'getClient');
+
+      const result = await PreFlightSimulator.dryRun(new Transaction(), mockOpportunity);
+
+      expect(simulateSpy).toHaveBeenCalledTimes(1);
+      expect(grpcClientSpy).not.toHaveBeenCalled();
       expect(result.simulationType).toBe('dryRun');
       expect(result.success).toBe(true);
     });
@@ -197,6 +247,66 @@ describe('Audit & Refinement Plan Implementation Verification', () => {
       });
 
       expect(priceCache.isPriceFresh(TEST_EXPIRED, 60_000)).toBe(false);
+    });
+
+    it('rejects a stale source timestamp even when the response was just received', () => {
+      const coinType = '0xStaleSource::test::STALE';
+      priceCache.updatePrice({
+        symbol: 'TEST_STALE_SOURCE',
+        coinType,
+        price: 5.0,
+        confidence: 0,
+        exponent: -8,
+        rawPrice: 500000000n,
+        publishTime: Math.floor((Date.now() - 30_000) / 1000),
+        lastUpdatedMs: Date.now(),
+        isDefaultSeed: false,
+      });
+
+      expect(priceCache.isPriceFresh(coinType, 10_000)).toBe(false);
+    });
+
+    it('rejects future-dated Pyth data and prevents older updates from replacing newer prices', () => {
+      const coinType = '0xTimestampOrder::test::PRICE';
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      priceCache.updatePrice({
+        symbol: 'TEST_TIMESTAMP_ORDER',
+        coinType,
+        price: 10,
+        confidence: 0,
+        exponent: -8,
+        rawPrice: 1000000000n,
+        publishTime: nowSeconds,
+        lastUpdatedMs: Date.now(),
+        isDefaultSeed: false,
+      });
+
+      priceCache.updatePrice({
+        symbol: 'TEST_TIMESTAMP_ORDER',
+        coinType,
+        price: 99,
+        confidence: 0,
+        exponent: -8,
+        rawPrice: 9900000000n,
+        publishTime: nowSeconds + 10,
+        lastUpdatedMs: Date.now(),
+        isDefaultSeed: false,
+      });
+      expect(priceCache.getPriceByCoinType(coinType)?.price).toBe(10);
+      expect(priceCache.isPriceFresh(coinType)).toBe(true);
+
+      priceCache.updatePrice({
+        symbol: 'TEST_TIMESTAMP_ORDER',
+        coinType,
+        price: 1,
+        confidence: 0,
+        exponent: -8,
+        rawPrice: 100000000n,
+        publishTime: nowSeconds - 1,
+        lastUpdatedMs: Date.now(),
+        isDefaultSeed: false,
+      });
+      expect(priceCache.getPriceByCoinType(coinType)?.price).toBe(10);
     });
   });
 

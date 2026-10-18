@@ -112,12 +112,12 @@ export interface SimulationResult {
 }
 
 export interface ExecutionResult {
-  digest: string;
+  digest?: string;
   success: boolean;
   opportunity: LiquidationOpportunity;
   gasUsedSui: number;
   gasCostUsd: number;
-  netProfitUsd: number;
+  estimatedNetProfitUsd: number | null;
   timestamp: number;
   errorMessage?: string;
 }
@@ -133,7 +133,7 @@ export interface SystemStats {
   totalLiquidationsAttempted: number;
   successfulLiquidations: number;
   failedLiquidations: number;
-  cumulativeNetProfitUsd: number;
+  cumulativeRealizedPnlUsd: number | null;
   cumulativeGasSpentSui: number;
   lastLiquidationTime?: number;
 }
@@ -145,7 +145,7 @@ export interface TelemetryOperator {
 }
 
 export interface TelemetryFinancials {
-  netRealizedPnlUsd: number;
+  netRealizedPnlUsd: number | null;
   cumulativeGasSpentSui: number;
   successfulLiquidations: number;
   failedLiquidations: number;
@@ -177,7 +177,7 @@ export interface TelemetryRecentLiquidationItem {
   borrower: string;
   debtRepaid: string;
   collateralSeized: string;
-  netProfitUsd: number;
+  estimatedNetProfitUsd: number;
   gasCostSui: number;
   txDigest: string;
   txDigestLink: string;

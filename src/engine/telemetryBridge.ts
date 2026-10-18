@@ -212,7 +212,9 @@ export class TelemetryBridge {
         gasTankBalanceMist,
       },
       financials: {
-        netRealizedPnlUsd: Number((searcher?.stats?.cumulativeNetProfitUsd ?? 0).toFixed(2)),
+        netRealizedPnlUsd: searcher?.stats?.cumulativeRealizedPnlUsd == null
+          ? null
+          : Number(searcher.stats.cumulativeRealizedPnlUsd.toFixed(2)),
         cumulativeGasSpentSui: Number((searcher?.stats?.cumulativeGasSpentSui ?? 0).toFixed(4)),
         successfulLiquidations: searcher?.stats?.successfulLiquidations ?? 0,
         failedLiquidations: searcher?.stats?.failedLiquidations ?? 0,

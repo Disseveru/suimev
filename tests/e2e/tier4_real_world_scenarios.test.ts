@@ -75,7 +75,7 @@ describe('Tier 4: Real-World Workload Scenarios (Operational Invariants & System
       confidence: 0,
       exponent: -8,
       rawPrice: 212000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -95,7 +95,7 @@ describe('Tier 4: Real-World Workload Scenarios (Operational Invariants & System
       borrower: '0xWhaleBorrower1',
       debtRepaid: '7,710.00 USDC', // 50% close factor
       collateralSeized: '3,825.40 SUI',
-      netProfitUsd: 42.15,
+      estimatedNetProfitUsd: 42.15,
       gasCostSui: 0.045,
       txDigest: simulatedDigest,
       txDigestLink: `https://suiscan.xyz/mainnet/tx/${simulatedDigest}`,
@@ -149,8 +149,8 @@ describe('Tier 4: Real-World Workload Scenarios (Operational Invariants & System
     expect(validation.valid).toBe(true);
 
     // Verify UI representations
-    const strikeAlert = `🚨 STRIKE: Liquidated ${consumed.recentLiquidations[0].borrower} for +$${consumed.recentLiquidations[0].netProfitUsd} net`;
-    expect(strikeAlert).toContain('+$42.15 net');
+    const strikeAlert = `🚨 STRIKE: Liquidated ${consumed.recentLiquidations[0].borrower} for estimated +$${consumed.recentLiquidations[0].estimatedNetProfitUsd} net`;
+    expect(strikeAlert).toContain('estimated +$42.15 net');
     expect(consumed.recentLiquidations[0].txDigestLink).toContain(simulatedDigest);
   });
 
@@ -205,7 +205,7 @@ describe('Tier 4: Real-World Workload Scenarios (Operational Invariants & System
       confidence: 0,
       exponent: -8,
       rawPrice: 200000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -274,7 +274,7 @@ describe('Tier 4: Real-World Workload Scenarios (Operational Invariants & System
       borrower: '0xFailedTargetRpcTimeout',
       debtRepaid: '0 USDC',
       collateralSeized: '0 SUI',
-      netProfitUsd: -0.015, // Gas spent on reverted tx
+      estimatedNetProfitUsd: -0.015, // Gas spent on reverted tx
       gasCostSui: 0.0075,
       txDigest: 'RPC_TIMEOUT_FAILED_TX',
       txDigestLink: 'https://suiscan.xyz/mainnet/tx/RPC_TIMEOUT_FAILED_TX',

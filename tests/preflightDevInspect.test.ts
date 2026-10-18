@@ -1,13 +1,15 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { ZeroCapitalPtbBuilder } from '../src/engine/ptbBuilder.js';
 import { PreFlightSimulator } from '../src/engine/simulator.js';
 import { priceCache } from '../src/oracles/priceCache.js';
 import { naviProtocol } from '../src/protocols/navi/naviProtocol.js';
 import { ReplayDebugger } from '../src/tools/replayDebugger.js';
+import { grpcManager } from '../src/client/grpcClient.js';
 import { LiquidationOpportunity, ObligationState } from '../src/config/types.js';
 
 describe('Pre-Flight devInspect Dry-Runs & Simulation Audit', () => {
   beforeAll(async () => {
+    vi.spyOn(grpcManager, 'checkHealth').mockResolvedValue('test-chain');
     priceCache.updatePrice({
       symbol: 'SUI',
       coinType: '0x2::sui::SUI',
@@ -15,7 +17,7 @@ describe('Pre-Flight devInspect Dry-Runs & Simulation Audit', () => {
       confidence: 0,
       exponent: -8,
       rawPrice: 250_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -26,7 +28,7 @@ describe('Pre-Flight devInspect Dry-Runs & Simulation Audit', () => {
       confidence: 0,
       exponent: -8,
       rawPrice: 100_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -34,6 +36,16 @@ describe('Pre-Flight devInspect Dry-Runs & Simulation Audit', () => {
   });
 
   it('pre-flight simulation verifies positive net yield and zero execution reverts', async () => {
+    vi.spyOn(grpcManager, 'getClient').mockReturnValue({
+      simulateTransaction: vi.fn().mockResolvedValue({
+        $kind: 'FailedTransaction',
+        FailedTransaction: {
+          status: { success: false, error: 'MoveAbort(0x2::navi::liquidate, 1)' },
+          effects: null,
+        },
+      }),
+    } as never);
+
     const mockObligation: ObligationState = {
       protocol: 'navi',
       obligationId: '0x0000000000000000000000000000000000000000000000000000000000000abc',

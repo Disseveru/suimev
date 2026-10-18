@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
 // Load .env file
-dotenv.config();
+dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env' });
 
 const optionalUrl = z.preprocess(
   (val) => (typeof val === 'string' && val.trim() === '' ? undefined : val),
@@ -17,6 +17,8 @@ const optionalString = z.preprocess(
 
 const envSchema = z.object({
   NETWORK: z.enum(['mainnet', 'testnet']).default('mainnet'),
+  SUI_GRPC_HOST: optionalString,
+  SUI_GRPC_AUTHORIZATION: optionalString,
   SUI_RPC_URL: z.string().url().default('https://fullnode.mainnet.sui.io:443'),
   SUI_BACKUP_RPCS: z.string().default('https://sui-mainnet.nodeinfra.com,https://mainnet.sui.rpcpool.com'),
   SUI_WS_URL: z.string().default('wss://fullnode.mainnet.sui.io:443'),
@@ -24,7 +26,8 @@ const envSchema = z.object({
   PYTH_API_KEY: optionalString,
   SUI_PRIVATE_KEY: optionalString,
   DRY_RUN: z.preprocess((val) => val === 'true' || val === true || val === '1', z.boolean().default(true)),
-  MIN_PROFIT_USD: z.coerce.number().default(2.0),
+  LIVE_EXECUTION_APPROVED: z.preprocess((val) => val === 'true' || val === true || val === '1', z.boolean().default(false)),
+  MIN_PROFIT_USD: z.coerce.number().default(5.0),
   MAX_SLIPPAGE_BPS: z.coerce.number().default(100),
   GAS_BUDGET: z.coerce.number().default(50_000_000), // 0.05 SUI
   GAS_PRICE_MULTIPLIER: z.coerce.number().default(1.15),
@@ -42,6 +45,27 @@ const envSchema = z.object({
 });
 
 const parsedEnv = envSchema.parse(process.env);
+
+function getAlchemyGrpcCredentials(): { host: string; authorization: string } | null {
+  const endpoint = parsedEnv.NETWORK === 'mainnet'
+    ? parsedEnv.ALCHEMY_SUI_MAINNET_RPC
+    : parsedEnv.ALCHEMY_SUI_TESTNET_RPC;
+  if (!endpoint) return null;
+
+  const url = new URL(endpoint);
+  if (!url.hostname.endsWith('.alchemy.com')) return null;
+  const match = /^\/v\d+\/([^/]+)\/?$/.exec(url.pathname);
+  if (!match?.[1]) return null;
+
+  return {
+    host: parsedEnv.NETWORK === 'mainnet'
+      ? 'sui-mainnet.g.alchemy.com:443'
+      : 'sui-testnet.g.alchemy.com:443',
+    authorization: `Bearer ${decodeURIComponent(match[1])}`,
+  };
+}
+
+const alchemyGrpcCredentials = getAlchemyGrpcCredentials();
 
 // Select active RPC URL (prefer dedicated Alchemy endpoint over deprecated public fullnode)
 const activeRpcUrl =
@@ -122,6 +146,9 @@ const operatorKeypair = parseOperatorKeypair(parsedEnv.SUI_PRIVATE_KEY, parsedEn
 
 export const CONFIG = {
   network: parsedEnv.NETWORK,
+  grpcHost: parsedEnv.SUI_GRPC_HOST || alchemyGrpcCredentials?.host,
+  grpcAuthorization: parsedEnv.SUI_GRPC_AUTHORIZATION || alchemyGrpcCredentials?.authorization,
+  liveExecutionReady: false,
   rpcUrl: activeRpcUrl,
   backupRpcs,
   alchemyMainnetRpc: parsedEnv.ALCHEMY_SUI_MAINNET_RPC,
@@ -133,6 +160,7 @@ export const CONFIG = {
   operatorKeypair,
   operatorAddress: operatorKeypair.toSuiAddress(),
   dryRun: parsedEnv.DRY_RUN,
+  liveExecutionApproved: parsedEnv.LIVE_EXECUTION_APPROVED,
   minProfitUsd: parsedEnv.MIN_PROFIT_USD,
   maxSlippageBps: parsedEnv.MAX_SLIPPAGE_BPS,
   gasBudget: parsedEnv.GAS_BUDGET,

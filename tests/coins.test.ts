@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Transaction } from '@mysten/sui/transactions';
 import {
   COIN_CONFIGS,
@@ -189,8 +189,9 @@ describe('Coin Coverage Modernization & Expansion (Requirement R1)', () => {
     });
 
     it('should dynamically update afSUI price when SUI price changes via redemption rate', () => {
+      const publishTime = Math.floor(Date.now() / 1000);
       // Update SUI to $2.00
-      priceCache.updatePriceForSymbol('SUI', '200000000', -8, 1700000000);
+      priceCache.updatePriceForSymbol('SUI', '200000000', -8, publishTime);
 
       const suiPrice = priceCache.getPriceBySymbol('SUI')!.price;
       expect(suiPrice).toBeCloseTo(2.0, 2);
@@ -201,7 +202,7 @@ describe('Coin Coverage Modernization & Expansion (Requirement R1)', () => {
       expect(afsuiUsd).toBeCloseTo(2.10, 1);
 
       // Now simulate a Pyth update for afSUI redemption rate (e.g. 1.062)
-      priceCache.updateFromPyth(afsuiCfg.pythPriceFeedId, '106200000', -8, 1700000010);
+      priceCache.updateFromPyth(afsuiCfg.pythPriceFeedId, '106200000', -8, publishTime + 1);
       const updatedAfSui = priceCache.getPriceUsd(afsuiCfg.coinType);
       // 2.0 * 1.062 = 2.124
       expect(updatedAfSui).toBeCloseTo(2.124, 2);
@@ -292,9 +293,18 @@ describe('Coin Coverage Modernization & Expansion (Requirement R1)', () => {
       expect(initialPoolCount).toBeGreaterThan(0);
 
       // syncDynamicPools should not throw even if network is restricted or fails
-      const result = await CetusRouter.syncDynamicPools();
-      expect(typeof result).toBe('number');
-      expect(result).toBeGreaterThanOrEqual(0);
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { pools: [] } }),
+      } as Response);
+      try {
+        const result = await CetusRouter.syncDynamicPools();
+        expect(typeof result).toBe('number');
+        expect(result).toBeGreaterThanOrEqual(0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });

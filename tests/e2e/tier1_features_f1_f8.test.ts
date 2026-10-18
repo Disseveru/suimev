@@ -57,7 +57,7 @@ describe('Tier 1: Feature Coverage — Coins, Oracles, Pools & Math (F1–F8)', 
       confidence: 0,
       exponent: -8,
       rawPrice: 200_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -68,7 +68,7 @@ describe('Tier 1: Feature Coverage — Coins, Oracles, Pools & Math (F1–F8)', 
       confidence: 0,
       exponent: -8,
       rawPrice: 100_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -79,7 +79,7 @@ describe('Tier 1: Feature Coverage — Coins, Oracles, Pools & Math (F1–F8)', 
       confidence: 0,
       exponent: -8,
       rawPrice: 100_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -90,7 +90,7 @@ describe('Tier 1: Feature Coverage — Coins, Oracles, Pools & Math (F1–F8)', 
       confidence: 0,
       exponent: -8,
       rawPrice: 8500000000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -101,7 +101,7 @@ describe('Tier 1: Feature Coverage — Coins, Oracles, Pools & Math (F1–F8)', 
       confidence: 0,
       exponent: -8,
       rawPrice: 25000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -112,7 +112,7 @@ describe('Tier 1: Feature Coverage — Coins, Oracles, Pools & Math (F1–F8)', 
       confidence: 0,
       exponent: -8,
       rawPrice: 210000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
   });

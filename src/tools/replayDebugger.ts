@@ -62,10 +62,8 @@ export class ReplayDebugger {
     const netGasCost = computationCost + storageCost - storageRebate;
     const netGasCostSui = Number(netGasCost) / 1e9;
 
-    const rpcUrl = rpcManager.getActiveUrl();
-
-    // Sui CLI Replay command
-    const suiReplayCommand = `sui replay --rpc ${rpcUrl} --digest ${digest}`;
+    const rpcEnvVar = process.platform === 'win32' ? '$env:SUI_RPC_URL' : '$SUI_RPC_URL';
+    const suiReplayCommand = `sui replay --rpc ${rpcEnvVar} --digest ${digest}`;
 
     // Debugger and trace explorer URLs
     const sentioDebuggerUrl = `https://app.sentio.xyz/sui/tx/${digest}`;

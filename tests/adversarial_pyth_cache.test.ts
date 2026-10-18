@@ -183,7 +183,7 @@ describe('Adversarial Stress Test: Pyth Oracle Pricing & Cache Resilience', () =
       expect(cache.getPriceUsd(afsuiCfg.coinType)).toBeCloseTo(1.06, 2);
 
       // 3. Volatility event: SUI price triples from $1.00 to $3.00!
-      cache.updatePriceForSymbol('SUI', '300000000', -8, now + 10);
+      cache.updatePriceForSymbol('SUI', '300000000', -8, now);
       expect(cache.getPriceBySymbol('SUI')!.price).toBeCloseTo(3.0, 2);
 
       // 4. MEV INVARIANT: 1 afSUI is worth 1.06 * SUI.

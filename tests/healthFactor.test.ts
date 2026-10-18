@@ -13,7 +13,7 @@ describe('HealthFactorEngine', () => {
       confidence: 0,
       exponent: -8,
       rawPrice: 200_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -24,7 +24,7 @@ describe('HealthFactorEngine', () => {
       confidence: 0,
       exponent: -8,
       rawPrice: 100_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
   });

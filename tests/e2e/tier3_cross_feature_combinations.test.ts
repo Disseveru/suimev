@@ -46,7 +46,7 @@ describe('Tier 3: Cross-Feature Integration Combinations (Scenarios 3.1–3.10)'
         borrower: `0xInitialBorrower_${i}`,
         debtRepaid: '1,000 USDC',
         collateralSeized: '500 SUI',
-        netProfitUsd: 15.0 * i,
+        estimatedNetProfitUsd: 15.0 * i,
         gasCostSui: 0.02,
         txDigest: `initial_tx_${i}`,
         txDigestLink: `https://suiscan.xyz/mainnet/tx/initial_tx_${i}`,
@@ -75,7 +75,7 @@ describe('Tier 3: Cross-Feature Integration Combinations (Scenarios 3.1–3.10)'
       borrower: '0xPostRestartBorrower',
       debtRepaid: '2,000 USDC',
       collateralSeized: '1,000 SUI',
-      netProfitUsd: 35.0,
+      estimatedNetProfitUsd: 35.0,
       gasCostSui: 0.03,
       txDigest: 'post_restart_tx_1',
       txDigestLink: 'https://suiscan.xyz/mainnet/tx/post_restart_tx_1',
@@ -114,7 +114,7 @@ describe('Tier 3: Cross-Feature Integration Combinations (Scenarios 3.1–3.10)'
       confidence: 0,
       exponent: -8,
       rawPrice: 100_000_000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -125,7 +125,7 @@ describe('Tier 3: Cross-Feature Integration Combinations (Scenarios 3.1–3.10)'
       confidence: 0,
       exponent: -8,
       rawPrice: 8500000000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
 
@@ -179,7 +179,7 @@ describe('Tier 3: Cross-Feature Integration Combinations (Scenarios 3.1–3.10)'
       confidence: 0,
       exponent: -8,
       rawPrice: 250000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
     HealthFactorEngine.evaluateObligation(testObligation);
@@ -195,7 +195,7 @@ describe('Tier 3: Cross-Feature Integration Combinations (Scenarios 3.1–3.10)'
       confidence: 0,
       exponent: -8,
       rawPrice: 205000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
     HealthFactorEngine.evaluateObligation(testObligation);
@@ -211,7 +211,7 @@ describe('Tier 3: Cross-Feature Integration Combinations (Scenarios 3.1–3.10)'
       confidence: 0,
       exponent: -8,
       rawPrice: 190000000n,
-      publishTime: 1700000000,
+      publishTime: Math.floor(Date.now() / 1000),
       lastUpdatedMs: Date.now(),
     });
     HealthFactorEngine.evaluateObligation(testObligation);
@@ -279,7 +279,7 @@ describe('Tier 3: Cross-Feature Integration Combinations (Scenarios 3.1–3.10)'
         borrower: `0xBurstBorrower_${i}`,
         debtRepaid: `${i * 100} USDC`,
         collateralSeized: `${i * 50} SUI`,
-        netProfitUsd: i * 2.5,
+        estimatedNetProfitUsd: i * 2.5,
         gasCostSui: 0.02,
         txDigest: `digest_burst_${i}`,
         txDigestLink: `https://suiscan.xyz/mainnet/tx/digest_burst_${i}`,

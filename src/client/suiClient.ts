@@ -2,6 +2,27 @@ import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { CONFIG } from '../config/index.js';
 import { logger } from '../ui/logger.js';
 
+function maskEndpoint(endpoint: string): string {
+  try {
+    const url = new URL(endpoint);
+    url.username = '';
+    url.password = '';
+    const segments = url.pathname.split('/');
+    for (let i = 1; i < segments.length; i++) {
+      if (/^v\d+$/i.test(segments[i]) && segments[i + 1]) {
+        segments[i + 1] = '[REDACTED]';
+      }
+    }
+    url.pathname = segments.join('/');
+    for (const key of url.searchParams.keys()) {
+      url.searchParams.set(key, '[REDACTED]');
+    }
+    return url.toString();
+  } catch {
+    return '[invalid endpoint]';
+  }
+}
+
 interface RpcEndpointState {
   url: string;
   client: SuiJsonRpcClient;
@@ -26,13 +47,40 @@ export class SuiClientManager {
 
     this.endpoints = uniqueUrls.map((url) => ({
       url,
-      client: new SuiJsonRpcClient({ url, network: CONFIG.network as 'mainnet' | 'testnet' }),
+      client: this.createGuardedClient(url),
       failures: 0,
       lastLatencyMs: 0,
       isHealthy: true,
     }));
 
-    logger.info({ endpoints: uniqueUrls }, `Initialized Multi-RPC Client Manager with ${uniqueUrls.length} endpoint(s)`);
+    logger.info(
+      { endpoints: uniqueUrls.map(maskEndpoint) },
+      `Initialized Multi-RPC Client Manager with ${uniqueUrls.length} endpoint(s)`
+    );
+  }
+
+  private createGuardedClient(url: string): SuiJsonRpcClient {
+    const client = new SuiJsonRpcClient({ url, network: CONFIG.network as 'mainnet' | 'testnet' });
+    return new Proxy(client, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (property === 'signAndExecuteTransaction' && typeof value === 'function') {
+          return (...args: Parameters<SuiJsonRpcClient['signAndExecuteTransaction']>) => {
+            if (CONFIG.dryRun) {
+              throw new Error('DRY_RUN is enabled; refusing to broadcast a transaction.');
+            }
+            if (!CONFIG.liveExecutionApproved) {
+              throw new Error('LIVE_EXECUTION_APPROVED is not true; refusing to broadcast a transaction.');
+            }
+            if (!CONFIG.liveExecutionReady) {
+              throw new Error('Live execution is disabled until all Sui gRPC, indexer, protocol, and profit-accounting migrations are complete.');
+            }
+            return Reflect.apply(value, target, args);
+          };
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
   }
 
   public static getInstance(): SuiClientManager {
@@ -81,12 +129,12 @@ export class SuiClientManager {
         endpoint.failures++;
         endpoint.lastLatencyMs = Date.now() - startMs;
 
-        const errStr = err instanceof Error ? err.message : String(err);
+        const errStr = this.redactError(err);
         const isPrunedHistory = errStr.includes('Could not find the referenced transaction events');
         if (isPrunedHistory) {
           // The event cursor has reached beyond the historical pruning retention window of the RPC.
           // Propagate immediately so caller ends historical pagination cleanly without retry spam.
-          throw err;
+          throw new Error(errStr);
         }
 
         const isRateLimit = errStr.includes('429') || errStr.includes('Too Many Requests');
@@ -97,19 +145,27 @@ export class SuiClientManager {
         logger.warn(
           {
             operation: operationName,
-            endpoint: endpoint.url,
+            endpoint: maskEndpoint(endpoint.url),
             latencyMs: endpoint.lastLatencyMs,
             failures: endpoint.failures,
             error: errStr,
           },
-          `RPC call failed on ${endpoint.url}. Attempting next endpoint...`
+          `RPC call failed on ${maskEndpoint(endpoint.url)}. Attempting next endpoint...`
         );
       }
     }
 
     throw new Error(
-      `All ${this.endpoints.length} Sui RPC endpoints failed for '${operationName}'. Last error: ${lastError}`
+      `All ${this.endpoints.length} Sui RPC endpoints failed for '${operationName}'. Last error: ${this.redactError(lastError)}`
     );
+  }
+
+  private redactError(error: unknown): string {
+    let message = error instanceof Error ? error.message : String(error);
+    for (const endpoint of this.endpoints) {
+      message = message.replaceAll(endpoint.url, maskEndpoint(endpoint.url));
+    }
+    return message;
   }
 
   /**
@@ -138,11 +194,12 @@ export class SuiClientManager {
       } catch (err) {
         endpoint.failures++;
         endpoint.lastLatencyMs = Date.now() - startMs;
-        const isRateLimit = String(err).includes('429') || String(err).includes('Too Many Requests');
+        const errStr = this.redactError(err);
+        const isRateLimit = errStr.includes('429') || errStr.includes('Too Many Requests');
         if (endpoint.failures >= 3 || isRateLimit) {
           endpoint.isHealthy = false;
         }
-        throw err;
+        throw new Error(errStr);
       }
     });
 
